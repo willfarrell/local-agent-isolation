@@ -1,22 +1,17 @@
 name: Tests (sast)
-# main is covered by release.yml, which calls this before it builds anything.
 on:
+  push:
+    branches: [main]
   pull_request:
   schedule:
     - cron: "43 3 * * 5"
   workflow_dispatch:
-  workflow_call:
-    secrets:
-      GITLEAKS_LICENSE:
-        required: false
 
 permissions:
   contents: read
 
-# A literal prefix, not github.workflow: called from release.yml that is the
-# caller's name, which would put lint, sast and release in one group.
 concurrency:
-  group: sast-${{ github.event_name }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

@@ -4,7 +4,6 @@
 # docker-build.hcl's `release` group, the same command as a local release.
 #
 # Stages, each its own job so no stage holds more than it needs:
-#   lint, sast  the test workflows, called here so nothing ships untested
 #   build       builds and pushes by digest; no OIDC token, so it cannot sign
 #   provenance  SLSA Build L3 provenance from slsa-github-generator's isolated
 #               reusable workflow, attached to each image in the registry
@@ -12,9 +11,12 @@
 #   verify      checks both against this repo before the run can pass
 #   publish     a GitHub Release with generated notes, `v*` tags only
 #
-# Needs two repository secrets: DOCKERHUB_TOKEN, a Docker Hub personal access
-# token for willfarrell with Read & Write scope, and GITLEAKS_LICENSE, without
-# which the sast stage fails and nothing ships. Docker Hub creates each
+# The tests are not rerun here: the main ruleset (.github/rulesets/main.json)
+# only lets a commit onto main through a pull request whose checks passed on it
+# up to date with main. A `v*` tag must point at a commit on main.
+#
+# Needs one repository secret, DOCKERHUB_TOKEN: a Docker Hub personal access
+# token for willfarrell with Read & Write scope. Docker Hub creates each
 # repository on its first push, with the account's default visibility.
 #
 # Verify a pulled image (use --source-tag v1.2.3 for a tagged release):
@@ -46,20 +48,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  lint:
-    uses: ./.github/workflows/test-lint.yml
-
-  sast:
-    uses: ./.github/workflows/test-sast.yml
-    permissions:
-      actions: read
-      contents: read
-      security-events: write
-    secrets:
-      GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
-
   build:
-    needs: [lint, sast]
     runs-on: ubuntu-24.04
     # arm64 builds run under QEMU, and herdr and paperclip wait on every harness.
     timeout-minutes: 240
@@ -77,6 +66,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+
+      # No tag ruleset, so this is what keeps a tag from shipping a commit that
+      # never passed main's checks.
+      - name: Tag is on main
+        if: github.ref_type == 'tag'
+        run: git merge-base --is-ancestor HEAD origin/main
 
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 

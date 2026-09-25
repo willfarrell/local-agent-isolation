@@ -65,12 +65,13 @@ These rules apply to every change, and CI enforces the ones it can.
 
 **Pipeline**
 
-- Nothing is published unless lint and SAST pass in the same run
-  (`release.yml` calls both before building).
+- Nothing reaches `main`, and so nothing is published, without a signed,
+  reviewed pull request whose lint, SAST and image tests pass while up to date
+  with `main` (`.github/rulesets/main.json`). A `v*` tag only publishes a
+  commit that is on `main`.
 - The build job has no signing identity. Provenance comes from
   slsa-github-generator's isolated workflow, and each image is signed and
   verified before the run can succeed.
-- Changes to `main` go through a pull request with the checks passing.
 - This policy is reviewed every year and whenever the release pipeline
   changes. Last review: 2026-09-25.
 
