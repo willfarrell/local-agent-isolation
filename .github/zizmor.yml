@@ -1,0 +1,8 @@
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        # The generator refuses to run unless called by its release tag; its
+        # own verifier checks the tag against the signed provenance instead.
+        slsa-framework/slsa-github-generator/*: ref-pin
+        "*": hash-pin

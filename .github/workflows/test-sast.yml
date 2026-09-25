@@ -1,17 +1,22 @@
 name: Tests (sast)
+# main is covered by release.yml, which calls this before it builds anything.
 on:
-  push:
-    branches: [main]
   pull_request:
   schedule:
     - cron: "43 3 * * 5"
   workflow_dispatch:
+  workflow_call:
+    secrets:
+      GITLEAKS_LICENSE:
+        required: false
 
 permissions:
   contents: read
 
+# A literal prefix, not github.workflow: called from release.yml that is the
+# caller's name, which would put lint, sast and release in one group.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: sast-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -51,7 +56,7 @@ jobs:
           exit-code: 1
 
   trivy-sca:
-    name: "Trivy: SCA and licensing"
+    name: "Images: tests, DAST, Trivy SCA and licensing"
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -70,6 +75,57 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Build
         run: docker buildx bake -f docker-build.hcl paperclip local-system-2 --load
+      # With the launcher's flags (agents.zsh), so this is how users run them.
+      - name: Smoke and security tests
+        run: |
+          mkdir -p "$RUNNER_TEMP/agents"
+          run() {
+            docker run --rm --read-only --tmpfs /tmp:exec --tmpfs /home:uid=1000,gid=1000 \
+              --cap-drop ALL --security-opt no-new-privileges:true \
+              -v "$RUNNER_TEMP/agents:/.agents:ro" \
+              --entrypoint /sbin/tini willfarrell/paperclip -- home-init "$@"
+          }
+          for bin in claude codex copilot gemini opencode pi hermes herdr; do
+            run "$bin" --version >/dev/null || { echo "::error::$bin does not start"; exit 1; }
+          done
+          test "$(run id -u)" = 1000 || { echo "::error::not uid 1000"; exit 1; }
+          suid=$(run sh -c 'find / -xdev -perm /6000 -type f 2>/dev/null || true')
+          test -z "$suid" || { echo "::error::setuid/setgid files: $suid"; exit 1; }
+          test "$(run readlink /home/.claude/settings.json)" = /.agents/settings.claude.json \
+            || { echo "::error::settings.json is not linked to read-only /.agents"; exit 1; }
+          # home-init scrub: what a session plants in the home volume is gone at the next start.
+          docker run --rm -v smoke-home:/home --entrypoint sh willfarrell/paperclip \
+            -c 'mkdir -p /home/.claude/rules && touch /home/.bashrc /home/.claude/rules/x'
+          docker run --rm -v smoke-home:/home --entrypoint /sbin/tini willfarrell/paperclip -- \
+            home-init sh -c 'test ! -e /home/.bashrc && test ! -e /home/.claude/rules' \
+            || { echo "::error::home-init left planted files"; exit 1; }
+          docker run --rm --read-only --cap-drop ALL --security-opt no-new-privileges:true \
+            --entrypoint ollama willfarrell/local-system-2 --version >/dev/null \
+            || { echo "::error::local-system-2 does not start"; exit 1; }
+      # DAST: paperclip as compose runs it, scanned by the ZAP baseline. -I: warnings
+      # are reported, not fatal; only rules ZAP itself marks FAIL break the build.
+      - name: DAST (ZAP baseline, paperclip)
+        env:
+          PAPERCLIP_WORKSPACES: ${{ runner.temp }}/workspaces
+        run: |
+          mkdir -p "$HOME/.agents" "$PAPERCLIP_WORKSPACES" "$RUNNER_TEMP/zap"
+          chmod 777 "$RUNNER_TEMP/zap"
+          docker compose -f compose.yaml up -d --wait --wait-timeout 300 paperclip
+          curl -sf --retry 30 --retry-all-errors --retry-delay 2 -o /dev/null http://127.0.0.1:3100/
+          docker build -q -t zap .github/zap
+          docker run --rm --network host -v "$RUNNER_TEMP/zap:/zap/wrk:rw" zap \
+            zap-baseline.py -t http://127.0.0.1:3100 -I -r zap-report.html
+      - name: Paperclip logs
+        if: failure()
+        run: docker compose -f compose.yaml logs paperclip paperclip-db
+      - name: Upload ZAP report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zap-report
+          path: ${{ runner.temp }}/zap/zap-report.html
+          retention-days: 14
+          if-no-files-found: ignore
       # paperclip is herdr (every harness on tools) plus paperclip, so it and local-system-2 cover every image.
       - name: Trivy (paperclip)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -147,19 +203,33 @@ jobs:
           category: "/language:actions"
 
   # https://semgrep.dev/docs/semgrep-ci/sample-ci-configs/#github-actions
+  # A plain runner job, not `container:`, so harden-runner can wrap it.
   semgrep:
     name: "semgrep: SAST"
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    container:
-      image: semgrep/semgrep@sha256:3e6e5065d9e68abffddffdb536a8db2d79a8fa92dc424daa48d3a4b7d9bc65d0 # v1.111.0
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: block
+          disable-sudo: true
+          disable-telemetry: true
+          allowed-endpoints: >
+            auth.docker.io:443
+            github.com:443
+            production.cloudflare.docker.com:443
+            registry-1.docker.io:443
+            semgrep.dev:443
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: semgrep
-        run: semgrep scan --config p/dockerfile --error --metrics=off .
+        run: |
+          docker build -q -t semgrep .github/semgrep
+          docker run --rm -v "$PWD:/src:ro" -w /src semgrep \
+            semgrep scan --config p/dockerfile --error --metrics=off .
 
   # https://github.com/raven-actions/actionlint
   actionlint:

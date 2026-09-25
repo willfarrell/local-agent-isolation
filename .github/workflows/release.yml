@@ -3,12 +3,30 @@
 # tag publishes under that tag instead of `latest`). The build itself is
 # docker-build.hcl's `release` group, the same command as a local release.
 #
-# Needs one repository secret, DOCKERHUB_TOKEN: a Docker Hub personal access
-# token for willfarrell with Read & Write scope. Docker Hub creates each
+# Stages, each its own job so no stage holds more than it needs:
+#   lint, sast  the test workflows, called here so nothing ships untested
+#   build       builds and pushes by digest; no OIDC token, so it cannot sign
+#   provenance  SLSA Build L3 provenance from slsa-github-generator's isolated
+#               reusable workflow, attached to each image in the registry
+#   sign        cosign keyless signature on each image index
+#   verify      checks both against this repo before the run can pass
+#   publish     a GitHub Release with generated notes, `v*` tags only
+#
+# Needs two repository secrets: DOCKERHUB_TOKEN, a Docker Hub personal access
+# token for willfarrell with Read & Write scope, and GITLEAKS_LICENSE, without
+# which the sast stage fails and nothing ships. Docker Hub creates each
 # repository on its first push, with the account's default visibility.
 #
+# Verify a pulled image (use --source-tag v1.2.3 for a tagged release):
+#   cosign verify willfarrell/<target> \
+#     --certificate-identity-regexp '^https://github.com/willfarrell/local-agent-isolation/' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+#   slsa-verifier verify-image willfarrell/<target>@sha256:... \
+#     --source-uri github.com/willfarrell/local-agent-isolation --source-branch main
+#
 # Actions are pinned to commits, not tags, since a tag can be moved; the
-# comment after each is the version it was when pinned.
+# comment after each is the version it was when pinned. The one exception is
+# slsa-github-generator, which refuses to run unless called by its release tag.
 name: release
 
 on:
@@ -28,10 +46,25 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  lint:
+    uses: ./.github/workflows/test-lint.yml
+
+  sast:
+    uses: ./.github/workflows/test-sast.yml
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    secrets:
+      GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+  build:
+    needs: [lint, sast]
     runs-on: ubuntu-24.04
     # arm64 builds run under QEMU, and herdr and paperclip wait on every harness.
     timeout-minutes: 240
+    outputs:
+      images: ${{ steps.digests.outputs.images }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
@@ -63,4 +96,144 @@ jobs:
         run: |
           SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)
           export SOURCE_DATE_EPOCH
-          docker buildx bake -f docker-build.hcl release
+          docker buildx bake -f docker-build.hcl release --metadata-file bake-metadata.json
+
+      # The later stages work on digests, never tags: exactly what this run
+      # pushed. image.name lists every tag comma-joined; the repo is the first
+      # one with its tag cut off.
+      - name: Digests
+        id: digests
+        run: |
+          echo "images=$(jq -c '[.[] | objects | select(."containerimage.digest")
+            | {image: (."image.name" | split(",")[0] | sub(":[^:/]+$"; "")),
+               digest: ."containerimage.digest"}]' bake-metadata.json)" >> "$GITHUB_OUTPUT"
+
+  provenance:
+    needs: build
+    strategy:
+      matrix:
+        include: ${{ fromJSON(needs.build.outputs.images) }}
+    permissions:
+      actions: read
+      id-token: write
+      packages: write # requested by the generator; unused for Docker Hub
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0
+    with:
+      image: ${{ matrix.image }}
+      digest: ${{ matrix.digest }}
+      registry-username: willfarrell
+    secrets:
+      registry-password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+  sign:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        include: ${{ fromJSON(needs.build.outputs.images) }}
+    permissions:
+      contents: read
+      id-token: write # cosign keyless signing
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: block
+          disable-sudo: true
+          disable-telemetry: true
+          allowed-endpoints: >
+            auth.docker.io:443
+            fulcio.sigstore.dev:443
+            github.com:443
+            index.docker.io:443
+            objects.githubusercontent.com:443
+            production.cloudflare.docker.com:443
+            registry-1.docker.io:443
+            rekor.sigstore.dev:443
+            release-assets.githubusercontent.com:443
+            tuf-repo-cdn.sigstore.dev:443
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          username: willfarrell
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Sign
+        env:
+          REF: ${{ matrix.image }}@${{ matrix.digest }}
+        run: cosign sign --yes "$REF"
+
+  verify:
+    needs: [build, provenance, sign]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        include: ${{ fromJSON(needs.build.outputs.images) }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: block
+          disable-sudo: true
+          disable-telemetry: true
+          allowed-endpoints: >
+            api.github.com:443
+            auth.docker.io:443
+            github.com:443
+            index.docker.io:443
+            objects.githubusercontent.com:443
+            production.cloudflare.docker.com:443
+            registry-1.docker.io:443
+            rekor.sigstore.dev:443
+            release-assets.githubusercontent.com:443
+            tuf-repo-cdn.sigstore.dev:443
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - uses: slsa-framework/slsa-verifier/actions/installer@ea584f4502babc6f60d9bc799dbbb13c1caa9ee6 # v2.7.1
+
+      # Read only, but the repositories may be private under the account default.
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          username: willfarrell
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Verify signature and provenance
+        env:
+          REF: ${{ matrix.image }}@${{ matrix.digest }}
+          IDENTITY: ${{ github.server_url }}/${{ github.repository }}/.github/workflows/release.yml@${{ github.ref }}
+          SOURCE: ${{ github.ref_type == 'tag' && '--source-tag' || '--source-branch' }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          cosign verify "$REF" \
+            --certificate-identity "$IDENTITY" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com >/dev/null
+          slsa-verifier verify-image "$REF" \
+            --source-uri "github.com/$GITHUB_REPOSITORY" "$SOURCE" "$REF_NAME"
+
+  publish:
+    needs: verify
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write # create the GitHub Release
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: block
+          disable-sudo: true
+          disable-telemetry: true
+          allowed-endpoints: >
+            api.github.com:443
+
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes

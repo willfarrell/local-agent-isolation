@@ -7,3 +7,20 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+
+  # The CI tool pins (semgrep, ZAP). The image Dockerfiles take their bases
+  # from docker-build.hcl variables, which Dependabot cannot read; those are
+  # bumped by hand, see CONTRIBUTING.md.
+  - package-ecosystem: docker
+    directories: ["/.github/semgrep", "/.github/zap"]
+    schedule:
+      interval: weekly
+    groups:
+      ci-tools:
+        patterns: ["*"]
+
+  # The postgres digest pin in compose.yaml.
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly

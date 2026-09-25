@@ -85,11 +85,23 @@ start fails the build step instead of a session.
 
 ## Release
 
-`.github/workflows/release.yml` runs `docker buildx bake -f docker-build.hcl
-release` on every push to `main` that touches more than Markdown, and on `v*`
-tags. It needs a `DOCKERHUB_TOKEN` repository secret: a Docker Hub personal
-access token for `willfarrell` with Read & Write scope. Docker Hub creates each
+`.github/workflows/release.yml` runs on every push to `main` that touches more
+than Markdown, and on `v*` tags. The lint and SAST workflows run first. Then
+`docker buildx bake -f docker-build.hcl release` pushes the images, and each
+one gets SLSA Build L3 provenance and a cosign signature, both verified before
+the run passes. A `v*` tag also creates a GitHub Release with generated notes.
+The verify commands are at the top of the workflow.
+
+It needs a `DOCKERHUB_TOKEN` repository secret: a Docker Hub personal access
+token for `willfarrell` with Read & Write scope. Docker Hub creates each
 repository on its first push, with the account's default visibility.
+
+## Contributing, security, license
+
+- Issues and pull requests: [CONTRIBUTING.md](CONTRIBUTING.md).
+- Reporting vulnerabilities, supported versions, and the pipeline policy:
+  [SECURITY.md](SECURITY.md).
+- License: [MIT](LICENSE).
 
 ## Shell functions
 
