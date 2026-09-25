@@ -25,7 +25,7 @@ not be pursued.
 
 ## Supported versions
 
-Only the newest image is supported: `latest`, or the newest `v*` tag. Fixes
+Only the newest image is supported: `latest`, or the newest version tag (`0.0.0`). Fixes
 ship as new images; older tags are not patched.
 
 ## Verifying an image
@@ -67,7 +67,7 @@ These rules apply to every change, and CI enforces the ones it can.
 
 - Nothing reaches `main`, and so nothing is published, without a signed,
   reviewed pull request whose lint, SAST and image tests pass while up to date
-  with `main` (`.github/rulesets/main.json`). A `v*` tag only publishes a
+  with `main` (`.github/rulesets/main.json`). A version tag only publishes a
   commit that is on `main`.
 - The build job has no signing identity. Provenance comes from
   slsa-github-generator's isolated workflow, and each image is signed and

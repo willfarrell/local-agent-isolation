@@ -1,5 +1,5 @@
 # Builds every image for linux/amd64 and linux/arm64 and pushes it to Docker
-# Hub as willfarrell/<target>, tagged `latest` plus the short commit (a `v*` git
+# Hub as willfarrell/<target>, tagged `latest` plus the short commit (a `0.0.0` git
 # tag publishes under that tag instead of `latest`). The build itself is
 # docker-build.hcl's `release` group, the same command as a local release.
 #
@@ -9,17 +9,17 @@
 #               reusable workflow, attached to each image in the registry
 #   sign        cosign keyless signature on each image index
 #   verify      checks both against this repo before the run can pass
-#   publish     a GitHub Release with generated notes, `v*` tags only
+#   publish     a GitHub Release with generated notes, version tags only
 #
 # The tests are not rerun here: the main ruleset (.github/rulesets/main.json)
 # only lets a commit onto main through a pull request whose checks passed on it
-# up to date with main. A `v*` tag must point at a commit on main.
+# up to date with main. A version tag (`0.0.0`) must point at a commit on main.
 #
 # Needs one repository secret, DOCKERHUB_TOKEN: a Docker Hub personal access
 # token for willfarrell with Read & Write scope. Docker Hub creates each
 # repository on its first push, with the account's default visibility.
 #
-# Verify a pulled image (use --source-tag v1.2.3 for a tagged release):
+# Verify a pulled image (use --source-tag 1.2.3 for a tagged release):
 #   cosign verify willfarrell/<target> \
 #     --certificate-identity-regexp '^https://github.com/willfarrell/local-agent-isolation/' \
 #     --certificate-oidc-issuer https://token.actions.githubusercontent.com
@@ -34,7 +34,7 @@ name: release
 on:
   push:
     branches: [main]
-    tags: ['v*']
+    tags: ['[0-9]+.[0-9]+.[0-9]+']
     paths-ignore: ['**.md']
   workflow_dispatch:
 

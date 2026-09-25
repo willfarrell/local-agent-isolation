@@ -86,11 +86,11 @@ start fails the build step instead of a session.
 ## Release
 
 `.github/workflows/release.yml` runs on every push to `main` that touches more
-than Markdown, and on `v*` tags of commits on `main`. It does not rerun the
+than Markdown, and on version tags (`0.0.0`, no `v` prefix) of commits on `main`. It does not rerun the
 tests: the `main` ruleset (`.github/rulesets/`) already requires them to pass
 before a merge. `docker buildx bake -f docker-build.hcl release` pushes the images, and each
 one gets SLSA Build L3 provenance and a cosign signature, both verified before
-the run passes. A `v*` tag also creates a GitHub Release with generated notes.
+the run passes. A version tag also creates a GitHub Release with generated notes.
 The verify commands are at the top of the workflow.
 
 It needs a `DOCKERHUB_TOKEN` repository secret: a Docker Hub personal access
