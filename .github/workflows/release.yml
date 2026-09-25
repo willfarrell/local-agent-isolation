@@ -1,0 +1,66 @@
+# Builds every image for linux/amd64 and linux/arm64 and pushes it to Docker
+# Hub as willfarrell/<target>, tagged `latest` plus the short commit (a `v*` git
+# tag publishes under that tag instead of `latest`). The build itself is
+# docker-build.hcl's `release` group, the same command as a local release.
+#
+# Needs one repository secret, DOCKERHUB_TOKEN: a Docker Hub personal access
+# token for willfarrell with Read & Write scope. Docker Hub creates each
+# repository on its first push, with the account's default visibility.
+#
+# Actions are pinned to commits, not tags, since a tag can be moved; the
+# comment after each is the version it was when pinned.
+name: release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths-ignore: ['**.md']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One release per ref at a time; a newer push waits rather than racing it to
+# the same tags.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    # arm64 builds run under QEMU, and herdr and paperclip wait on every harness.
+    timeout-minutes: 240
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          # audit: builds reach docker hub, alpine, npm, PyPI and GitHub release CDNs.
+          egress-policy: audit
+          disable-sudo: true
+          disable-telemetry: true
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+
+      # A docker-container builder: the default docker driver cannot produce
+      # the SBOM and provenance attestations release targets carry.
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          username: willfarrell
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        env:
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || 'latest' }}
+          GIT_SHA: ${{ github.sha }}
+        run: |
+          SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)
+          export SOURCE_DATE_EPOCH
+          docker buildx bake -f docker-build.hcl release

@@ -1,0 +1,153 @@
+# The shared services, macOS, Linux and Windows. The harnesses are repo-scoped
+# and run one container per repo via `docker run`; see README.md.
+#
+#   docker compose -f compose.yaml up -d paperclip   # also starts paperclip-db
+#   docker compose -f compose.yaml up -d local-system-2
+#   docker compose -f compose.yaml exec local-system-2 \
+#     ollama pull hf.co/unsloth/Qwen3-0.6B-GGUF:Q4_K_M
+#
+# Harnesses reach them on the local-agent-isolation network at
+# http://local-system-2:11434/v1 and http://paperclip:3100.
+#
+# System 1, a local decision model that pre-picked skills per prompt, was
+# measured and removed. See the ~/.agents README, "System 1 (measured, not
+# shipped)".
+#
+# Host ports, kept distinct so both run at once:
+#
+#   1234    LM Studio / mlx-serve   native, Metal
+#   3100    paperclip               container           PAPERCLIP_PORT
+#   11434   local-system-2          container, CPU      SYSTEM2_PORT
+#
+# A container on macOS gets no Metal, so inference here is CPU-only. Keep
+# LM Studio / mlx-serve native on the host and reach it at
+# host.docker.internal:1234, NOT localhost, which is the container itself.
+
+# Named, not left to compose: it would take the directory name, and the
+# launchers join this network by name from wherever the checkout lives.
+name: local-agent-isolation
+
+services:
+  # Weights land in ~/.agents/models on the host, never in the image. The bind
+  # sits at the path the image already uses and nests inside the home volume,
+  # which works because docker applies mounts deepest-path-last. `ollama pull`
+  # is idempotent against it, so re-pulling a model already there downloads
+  # nothing. Gitignored; these are GBs.
+  #
+  # HOME on macOS and Linux; PowerShell sets no HOME environment variable, so
+  # Windows falls through to USERPROFILE (C:\Users\you), which Docker Desktop
+  # accepts as a bind source. That drive must be shared under Docker Desktop >
+  # Settings > Resources > File Sharing, or the bind silently mounts empty.
+  #
+  # Host files are owned by your user while the container writes as uid 1000;
+  # Docker Desktop maps that permissively, but on a Linux host the real uid
+  # mismatch makes this bind read-only in practice.
+  local-system-2:
+    image: willfarrell/local-system-2
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # Loopback only: ollama's API has no auth, and a bare port publishes on
+    # every interface, LAN included. Harnesses use the container network.
+    ports:
+      - "127.0.0.1:${SYSTEM2_PORT:-11434}:11434"
+    volumes:
+      - local-system-2-home:/home
+      - ${HOME:-${USERPROFILE}}/.agents/models:/home/.ollama/models
+
+  # Orchestrates the harnesses as a team of agents; the image is herdr plus the
+  # paperclip server. Login required (see its Dockerfile for why), and
+  # published on loopback only. On a fresh install, make the first admin with
+  # a one-time invite URL:
+  #   docker compose -f compose.yaml exec paperclip paperclipai auth bootstrap-ceo
+  #
+  # Projects point at repos under /workspaces, which is PAPERCLIP_WORKSPACES on
+  # the host (default ~/Development), read-write: the agents work there. Unlike
+  # the per-repo launcher, nothing guards .git/hooks under it, so an agent can
+  # leave a hook that your host git later runs.
+  # ponytail: one broad mount; narrow PAPERCLIP_WORKSPACES to the repos you
+  # hand to paperclip if that tradeoff matters.
+  #
+  # Keys pass through from the host environment, as the launchers do. Logins
+  # made inside (`docker compose exec paperclip claude`) persist in its home
+  # volume, which home-init resets the same way as the harnesses'.
+  paperclip:
+    image: willfarrell/paperclip
+    read_only: true
+    tmpfs:
+      - /tmp:exec
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      paperclip-db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${PAPERCLIP_PORT:-3100}:3100"
+    environment:
+      # local_trusted (default): no login, for anyone who can reach the port,
+      # including every harness container on this network. authenticated: login.
+      PAPERCLIP_DEPLOYMENT_MODE: ${PAPERCLIP_DEPLOYMENT_MODE:-local_trusted}
+      DATABASE_URL: postgres://paperclip@paperclip-db:5432/paperclip
+      PAPERCLIP_PUBLIC_URL: http://localhost:${PAPERCLIP_PORT:-3100}
+      # Hand that URL to the auth library too; left on auto, it derives its
+      # origin from each request and warns that redirects may not work.
+      PAPERCLIP_AUTH_BASE_URL_MODE: explicit
+      ANTHROPIC_API_KEY:
+      OPENAI_API_KEY:
+      GITHUB_TOKEN:
+      GEMINI_API_KEY:
+      GOOGLE_API_KEY:
+    volumes:
+      - ${HOME:-${USERPROFILE}}/.agents:/.agents:ro
+      - paperclip-home:/home
+      - ${PAPERCLIP_WORKSPACES:-${HOME:-${USERPROFILE}}/Development}:/workspaces
+    networks:
+      - default
+      - paperclip-db
+
+  # Paperclip's own database. Its embedded Postgres ships glibc binaries only,
+  # which do not run on the musl images. On an internal network only paperclip
+  # joins, so harness containers on the default network cannot reach it, which
+  # is why trust auth is enough: a password would sit in paperclip's
+  # environment, readable by the same agents anyway.
+  paperclip-db:
+    image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    user: "70:70"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/run/postgresql:uid=70,gid=70
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      POSTGRES_USER: paperclip
+      POSTGRES_DB: paperclip
+      POSTGRES_HOST_AUTH_METHOD: trust
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "paperclip", "-d", "paperclip"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - paperclip-db:/var/lib/postgresql
+    networks:
+      - paperclip-db
+
+networks:
+  default:
+    name: local-agent-isolation
+  paperclip-db:
+    internal: true
+
+volumes:
+  local-system-2-home:
+  paperclip-home:
+  paperclip-db:

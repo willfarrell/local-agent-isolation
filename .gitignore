@@ -1,0 +1,5 @@
+.DS_Store
+.env
+cosign.key
+release.json
+scan.tar
