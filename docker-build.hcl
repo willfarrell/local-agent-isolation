@@ -151,13 +151,24 @@ variable "HERDR_VERSION" {
   default = "0.9.1"
 }
 
+# T3 Code is built from its Git tag (the published `t3` is a glibc binary); the
+# commit is checked as well, as with Hermes. Bump both together:
+#   git ls-remote https://github.com/pingdotgg/t3code.git 'refs/tags/<tag>'
+variable "T3CODE_VERSION" {
+  default = "v0.0.45"
+}
+
+variable "T3CODE_COMMIT" {
+  default = "6c8fed35dded9ff71c5b46807125457acbb76be6"
+}
+
 # Alpine community package revision, so it moves with ALPINE_IMAGE.
 variable "OLLAMA_VERSION" {
   default = "0.17.7-r1"
 }
 
 group "default" {
-  targets = ["tools", "harness-claude-code", "harness-codex", "harness-copilot", "harness-gemini", "harness-hermes", "harness-opencode", "harness-pi-mono", "herdr", "paperclip", "local-system-2"]
+  targets = ["tools", "harness-claude-code", "harness-codex", "harness-copilot", "harness-gemini", "harness-hermes", "harness-opencode", "harness-pi-mono", "herdr", "paperclip", "t3code", "local-system-1", "local-system-2"]
 }
 
 target "_common" {
@@ -169,8 +180,9 @@ target "_common" {
 }
 
 # Only the images that still name alpine directly take ALPINE_IMAGE: tools, the
-# herdr download stage, and local-system-2. Harness runtimes start FROM tools instead, so
-# passing it to them would warn about an unconsumed build arg.
+# herdr download stage, local-system-1 and local-system-2. Harness runtimes
+# start FROM tools instead, so passing it to them would warn about an unconsumed
+# build arg.
 target "_alpine" {
   args = {
     ALPINE_IMAGE = ALPINE_IMAGE
@@ -315,6 +327,23 @@ target "paperclip" {
   }
 }
 
+# T3 Code drives the harnesses from a web UI, so like paperclip it is built on
+# herdr. A shared service in compose.yaml.
+target "t3code" {
+  inherits = ["_common"]
+  context  = "t3code"
+  tags     = ["willfarrell/t3code:${TAG}"]
+  contexts = {
+    herdr = ctx("herdr")
+  }
+  # NODE_IMAGE without _node's NPM_BEFORE: pnpm installs from upstream's lockfile.
+  args = {
+    NODE_IMAGE     = NODE_IMAGE
+    T3CODE_VERSION = T3CODE_VERSION
+    T3CODE_COMMIT  = T3CODE_COMMIT
+  }
+}
+
 # The base every harness runtime is built on; see tools/Dockerfile.
 target "tools" {
   inherits = ["_common", "_alpine", "_node"]
@@ -323,6 +352,14 @@ target "tools" {
   args = {
     CONTEXT_MODE_VERSION = CONTEXT_MODE_VERSION
   }
+}
+
+# Its one pip dependency is pinned by hash in local-system-1/requirements.txt
+# and the Julia-1 weights by revision in julia.py, so it takes no version variable.
+target "local-system-1" {
+  inherits = ["_common", "_alpine"]
+  context  = "local-system-1"
+  tags     = ["willfarrell/local-system-1:${TAG}"]
 }
 
 target "local-system-2" {
@@ -343,7 +380,7 @@ target "local-system-2" {
 # launchers).
 target "release" {
   name     = "${tgt}-release"
-  matrix   = { tgt = ["tools", "harness-claude-code", "harness-codex", "harness-copilot", "harness-gemini", "harness-hermes", "harness-opencode", "harness-pi-mono", "herdr", "paperclip", "local-system-2"] }
+  matrix   = { tgt = ["tools", "harness-claude-code", "harness-codex", "harness-copilot", "harness-gemini", "harness-hermes", "harness-opencode", "harness-pi-mono", "herdr", "paperclip", "t3code", "local-system-1", "local-system-2"] }
   inherits = [tgt, "_release"]
   tags = concat(
     ["${REGISTRY}/${tgt}:${TAG}"],

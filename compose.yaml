@@ -2,22 +2,27 @@
 # and run one container per repo via `docker run`; see README.md.
 #
 #   docker compose -f compose.yaml up -d paperclip   # also starts paperclip-db
+#   docker compose -f compose.yaml up -d t3code
+#   docker compose -f compose.yaml up -d local-system-1   # fetches Julia-1 on first start
 #   docker compose -f compose.yaml up -d local-system-2
 #   docker compose -f compose.yaml exec local-system-2 \
 #     ollama pull hf.co/unsloth/Qwen3-0.6B-GGUF:Q4_K_M
+#   docker compose -f compose.yaml exec local-system-2 \
+#     ollama pull qwen3.5:4b-q4_K_M      # decisions (skills decide, skill-router)
 #
 # Harnesses reach them on the local-agent-isolation network at
-# http://local-system-2:11434/v1 and http://paperclip:3100.
+# http://local-system-1:11435, http://local-system-2:11434/v1,
+# http://paperclip:3100 and http://t3code:3773 (pairing required).
+# local-system-1/README.md has the decision API.
 #
-# System 1, a local decision model that pre-picked skills per prompt, was
-# measured and removed. See the ~/.agents README, "System 1 (measured, not
-# shipped)".
-#
-# Host ports, kept distinct so both run at once:
+# Host ports, kept distinct so all run at once:
 #
 #   1234    LM Studio / mlx-serve   native, Metal
 #   3100    paperclip               container           PAPERCLIP_PORT
+#   3773    t3code                  container           T3CODE_PORT
+#   8765    Jeff (jeff-serve)       native, Metal       PORT
 #   11434   local-system-2          container, CPU      SYSTEM2_PORT
+#   11435   local-system-1          container, CPU      SYSTEM1_PORT
 #
 # A container on macOS gets no Metal, so inference here is CPU-only. Keep
 # LM Studio / mlx-serve native on the host and reach it at
@@ -28,6 +33,24 @@
 name: local-agent-isolation
 
 services:
+  # Julia-1 typed decisions. Weights download into ~/.agents/models/julia-1 on
+  # first start, sha256-checked; the uid caveat on local-system-2's bind below
+  # applies here too.
+  local-system-1:
+    image: willfarrell/local-system-1
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # Loopback only, like local-system-2: the API has no auth.
+    ports:
+      - "127.0.0.1:${SYSTEM1_PORT:-11435}:11435"
+    volumes:
+      - ${HOME:-${USERPROFILE}}/.agents/models/julia-1:/home/model
+
   # Weights land in ~/.agents/models on the host, never in the image. The bind
   # sits at the path the image already uses and nests inside the home volume,
   # which works because docker applies mounts deepest-path-last. `ollama pull`
@@ -111,6 +134,35 @@ services:
       - default
       - paperclip-db
 
+  # T3 Code: a web UI that drives the harnesses; the image is herdr plus the t3
+  # server. Every browser pairs with a one-time token. The startup log prints a
+  # link with the container's IP; mint one for the published port instead:
+  #   docker compose -f compose.yaml exec t3code t3 auth pairing create --base-url http://localhost:3773
+  #
+  # Projects live under /workspaces, the same mount and the same .git/hooks
+  # caveat as paperclip's.
+  t3code:
+    image: willfarrell/t3code
+    read_only: true
+    tmpfs:
+      - /tmp:exec
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "127.0.0.1:${T3CODE_PORT:-3773}:3773"
+    environment:
+      ANTHROPIC_API_KEY:
+      OPENAI_API_KEY:
+      GITHUB_TOKEN:
+      GEMINI_API_KEY:
+      GOOGLE_API_KEY:
+    volumes:
+      - ${HOME:-${USERPROFILE}}/.agents:/.agents:ro
+      - t3code-home:/home
+      - ${T3CODE_WORKSPACES:-${HOME:-${USERPROFILE}}/Development}:/workspaces
+
   # Paperclip's own database. Its embedded Postgres ships glibc binaries only,
   # which do not run on the musl images. On an internal network only paperclip
   # joins, so harness containers on the default network cannot reach it, which
@@ -151,3 +203,4 @@ volumes:
   local-system-2-home:
   paperclip-home:
   paperclip-db:
+  t3code-home:

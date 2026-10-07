@@ -1,0 +1,26 @@
+{
+  "question": "Which team should handle this request?",
+  "options": ["Billing: charges, invoices, refunds, payment problems", "Shipping: delivery status, delays, lost or damaged packages", "Account: login, password, profile and access problems", "Technical: bugs, errors, crashes in the app"],
+  "cases": [
+    {"state": "I was charged twice for my order.", "expect": "Billing: charges, invoices, refunds, payment problems"},
+    {"state": "Where is my refund? It's been two weeks.", "expect": "Billing: charges, invoices, refunds, payment problems"},
+    {"state": "Can I get a copy of last month's invoice?", "expect": "Billing: charges, invoices, refunds, payment problems"},
+    {"state": "My card was declined but I have funds.", "expect": "Billing: charges, invoices, refunds, payment problems"},
+    {"state": "Why did my subscription price go up?", "expect": "Billing: charges, invoices, refunds, payment problems"},
+    {"state": "My package says delivered but it's not here.", "expect": "Shipping: delivery status, delays, lost or damaged packages"},
+    {"state": "The box arrived crushed and the mug is broken.", "expect": "Shipping: delivery status, delays, lost or damaged packages"},
+    {"state": "When will my order ship?", "expect": "Shipping: delivery status, delays, lost or damaged packages"},
+    {"state": "Tracking hasn't updated in five days.", "expect": "Shipping: delivery status, delays, lost or damaged packages"},
+    {"state": "Can you deliver to a PO box?", "expect": "Shipping: delivery status, delays, lost or damaged packages"},
+    {"state": "I can't log in, it says my password is wrong.", "expect": "Account: login, password, profile and access problems"},
+    {"state": "How do I change the email on my account?", "expect": "Account: login, password, profile and access problems"},
+    {"state": "I never got the password reset email.", "expect": "Account: login, password, profile and access problems"},
+    {"state": "Please delete my account.", "expect": "Account: login, password, profile and access problems"},
+    {"state": "My two-factor codes stopped working.", "expect": "Account: login, password, profile and access problems"},
+    {"state": "The app crashes every time I open the camera.", "expect": "Technical: bugs, errors, crashes in the app"},
+    {"state": "I get error 500 when saving my profile photo.", "expect": "Technical: bugs, errors, crashes in the app"},
+    {"state": "The search results page is blank on Firefox.", "expect": "Technical: bugs, errors, crashes in the app"},
+    {"state": "Notifications stopped arriving after the update.", "expect": "Technical: bugs, errors, crashes in the app"},
+    {"state": "The export button does nothing when I click it.", "expect": "Technical: bugs, errors, crashes in the app"}
+  ]
+}

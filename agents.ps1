@@ -160,3 +160,17 @@ function paperclip {
 function paperclip-claude-auth {
   docker compose -f "$AgentsIsolation\compose.yaml" exec paperclip claude auth login
 }
+
+# T3 Code, a shared service too. Bare call starts it and prints a one-time
+# pairing link for the browser; args go to the t3 CLI inside: `t3 auth --help`.
+function t3 {
+  $compose = @('compose', '-f', "$AgentsIsolation\compose.yaml")
+  if ($args.Count) {
+    docker @compose exec t3code t3 @args
+  } else {
+    docker @compose up -d --wait t3code
+    if ($LASTEXITCODE -ne 0) { return }
+    $port = if ($env:T3CODE_PORT) { $env:T3CODE_PORT } else { 3773 }
+    docker @compose exec t3code t3 auth pairing create --base-url "http://localhost:$port"
+  }
+}

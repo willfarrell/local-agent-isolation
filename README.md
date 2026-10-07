@@ -2,8 +2,8 @@
 
 Containerization of common harnesses and meta-harnesses for local use:
 hardened multi-arch Alpine images for Claude Code, Codex, Copilot, Gemini,
-Hermes, OpenCode and pi, plus herdr and Paperclip, which run those as panes or
-as a team. `docker-build.hcl` builds them. Harnesses run one container per repo
+Hermes, OpenCode and pi, plus herdr, Paperclip and T3 Code, which run those as
+panes, as a team, or from a web UI. `docker-build.hcl` builds them. Harnesses run one container per repo
 with `docker run`; `compose.yaml` carries the shared services.
 
 Published on Docker Hub as `willfarrell/<target>` (`willfarrell/harness-codex`,
@@ -36,7 +36,7 @@ A missing file is a dangling link: that harness starts with its defaults.
 
 ## What every image has
 
-Every harness image, herdr and Paperclip start from `tools/Dockerfile`, so
+Every harness image, herdr, Paperclip and T3 Code start from `tools/Dockerfile`, so
 these are on PATH in all of them, pinned to the alpine 3.24 revision:
 
 | tool | version | why |
@@ -48,6 +48,7 @@ these are on PATH in all of them, pinned to the alpine 3.24 revision:
 | sqlite | 3.53.4 | CLI for the SQLite databases agents and harnesses keep |
 | ripgrep | 15.1.0 | the harnesses' search |
 | fd | 10.2.0 | file search; pi downloads its own without it |
+| rust, cargo | 1.96.1 | builds and tests Rust repos; pulls in gcc and musl-dev as the linker |
 | tini | 0.19.0 | init for every entrypoint |
 | context-mode | 1.0.169 | the MCP server every harness names |
 
@@ -63,7 +64,7 @@ docker buildx bake -f docker-build.hcl harness-codex --load
 CONTEXTS=image docker buildx bake -f docker-build.hcl --call check   # lint, after --load
 ```
 
-Every harness runtime starts `FROM tools`: alpine plus the bash, git, jq, node,
+Every harness runtime starts `FROM tools`: alpine plus the bash, git, jq, node, rust,
 rg and fd an agent shells out to, the MCP servers, `home-init`, and the setup
 every image shares (ca-certificates, tini, the uid 1000 `agent` user with bash
 as its shell, `safe.directory`). Those live in `tools/Dockerfile` instead of
@@ -125,7 +126,8 @@ reaches the host one.
 Plus `agents-build` to build the images; `ollama`: bare to start the shared
 daemon, with args to reach its CLI (`ollama pull hf.co/...`); and `paperclip`,
 the same for Paperclip (see below), with `paperclip-claude-auth` to log its
-Claude agents in.
+Claude agents in; and `t3`, which starts T3 Code and prints a pairing link
+(see below), with args to reach its CLI.
 
 ## Run a harness against a repo
 
@@ -269,27 +271,83 @@ docker compose -f compose.yaml exec -it paperclip claude        # log a harness 
   `paperclip-home` volume. Agents run in the same container and can read it;
   the container is the boundary, as with every harness here.
 
-## Shared services
+## T3 Code
 
-One shared daemon: ollama, for generation.
+[T3 Code](https://github.com/pingdotgg/t3code) is a web UI for the
+harnesses, with threads, diffs and terminals in the browser. It drives Claude,
+Codex, OpenCode and pi underneath. Like Paperclip it is a shared service built
+on herdr, so it has all seven harnesses and `home-init`.
 
 ```bash
+t3                                                      # starts it, prints a pairing link
+docker compose -f compose.yaml exec -it t3code claude   # log a harness in
+```
+
+- **Every browser pairs.** T3 Code has no no-login mode. Open the printed
+  `http://localhost:3773/pair#token=...` link. The token works once and
+  expires after 5 minutes; run `t3` again for a new one. Don't use the link in
+  the container's startup log: it names the container's IP, which the host
+  cannot reach.
+- **Built from source.** The published `t3` executable is a Node SEA linked
+  against glibc. So the image clones `T3CODE_VERSION`, checks that it is
+  `T3CODE_COMMIT`, and builds the server and web app from upstream's lockfile.
+  Bump both variables in `docker-build.hcl`. `t3 update` doesn't apply here;
+  rebuild instead.
+- **Repos live under `/workspaces`**, which is `T3CODE_WORKSPACES` on the host
+  (default `~/Development`), read-write. The `.git/hooks` caveat from Paperclip
+  applies.
+- **State lives in the `t3code-home` volume** (`~/.t3`): threads, settings and
+  paired sessions. Telemetry is off (`T3CODE_TELEMETRY_ENABLED=false`).
+- **Not shipped:** Cursor, Grok and Antigravity, since no image here has them.
+
+## Shared services
+
+Two shared daemons: Julia-1 for typed decisions, and ollama for generation.
+
+```bash
+docker compose -f compose.yaml up -d local-system-1      # decisions; fetches ~610 MB on first start
 docker compose -f compose.yaml up -d local-system-2
 
 docker compose -f compose.yaml exec local-system-2 \
   ollama pull hf.co/unsloth/Qwen3-0.6B-GGUF:Q4_K_M     # generation
+docker compose -f compose.yaml exec local-system-2 \
+  ollama pull qwen3.5:4b-q4_K_M                        # decisions
 ```
+
+Qwen3.5-4B answers the typed questions in `local-system-1/skills/decide` and
+`skill-router`. Pull it from the Ollama library, not from `hf.co/unsloth/...`:
+the Ollama 0.17.7 here cannot load the unsloth Qwen3.5 GGUF.
 
 | | host port | in-container URL | for |
 |---|---|---|---|
+| `local-system-1` | 127.0.0.1:11435 | `http://local-system-1:11435/predict` | typed decisions, milliseconds per call ([API](local-system-1/README.md)) |
 | `local-system-2` | 127.0.0.1:11434 | `http://local-system-2:11434/v1` | generation, seconds per call |
 | `paperclip` | 127.0.0.1:3100 | `http://paperclip:3100` | agent orchestration, web UI |
+| `t3code` | 127.0.0.1:3773 | `http://t3code:3773` | harness web UI, pairing required |
 | LM Studio (native) | 1234 | `http://host.docker.internal:1234/v1` | anything that needs Metal |
+| [Jeff](https://github.com/firelex/jeff) (native) | 8765 | `http://host.docker.internal:8765/v1/systemone` | typed decisions on Metal, up to 255 options, fine-tunable |
 
-A second daemon for typed decisions was measured and dropped; see the
-`~/.agents` README, "System 1 (measured, not shipped)". Ollama stays on its own because it
-serializes per model and evicts under memory pressure, so anything sharing it
-waits behind whatever is generating.
+Jeff is an optional alternative to local-system-1. It is a Qwen3.5 fine-tune
+that takes about 28 ms per decision on an M4 Max with MLX, but about 460 ms on
+CPU. It also needs torch, which has no musl wheels. So it runs natively, like
+LM Studio:
+
+```bash
+git clone https://github.com/firelex/jeff && cd jeff
+uv sync --extra mac
+uv run hf download mstrasser/Jeff-Qwen3.5-0.8B --local-dir checkpoints/jeff-0.8b
+JEFF_BACKEND=mlx JEFF_CHECKPOINT=checkpoints/jeff-0.8b PORT=8765 uv run jeff-serve
+```
+
+Its request format differs from `/predict`: one `state` with named
+`questions`, and options given as `criteria` keys. See its README.
+
+An earlier System 1 built on small Qwen models was measured and dropped; see
+the `~/.agents` README, "System 1 (measured, not shipped)". local-system-1
+replaces it with Julia-1, an encoder trained for exactly this kind of choice.
+Decisions stay out of ollama because ollama serializes per model and evicts
+under memory pressure, so anything sharing it waits behind whatever is
+generating.
 
 The same `compose.yaml` works on Windows: the models path falls back from
 `HOME` to `USERPROFILE`. Ollama weights persist in `~/.agents/models`

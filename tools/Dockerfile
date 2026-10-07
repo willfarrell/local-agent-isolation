@@ -17,6 +17,7 @@ FROM ${ALPINE_IMAGE}
 
 RUN apk add --no-cache \
       bash=5.3.9-r1 \
+      cargo=1.96.1-r0 \
       ca-certificates=20260909-r0 \
       fd=10.2.0-r3 \
       git=2.54.0-r0 \
@@ -25,6 +26,7 @@ RUN apk add --no-cache \
       libstdc++=15.2.0-r5 \
       nodejs=24.18.1-r0 \
       ripgrep=15.1.0-r0 \
+      rust=1.96.1-r0 \
       sqlite=3.53.4-r0 \
       tini=0.19.0-r3 \
  && addgroup -g 1000 agent \

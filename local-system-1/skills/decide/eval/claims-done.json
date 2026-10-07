@@ -1,0 +1,26 @@
+{
+  "question": "Does this message claim the work is finished?",
+  "options": ["No: work is still in progress, blocked, or a question is asked", "Yes: says the task is complete"],
+  "cases": [
+    {"state": "All tests pass and the feature is implemented. Done.", "expect": "Yes: says the task is complete"},
+    {"state": "I've fixed the bug and verified it with the new test. Ready for review.", "expect": "Yes: says the task is complete"},
+    {"state": "The migration has been applied and the app starts cleanly. That completes the task.", "expect": "Yes: says the task is complete"},
+    {"state": "Finished: README updated with the new install steps.", "expect": "Yes: says the task is complete"},
+    {"state": "Everything you asked for is in place: the endpoint, the tests and the docs.", "expect": "Yes: says the task is complete"},
+    {"state": "Implemented the retry logic. The change is complete.", "expect": "Yes: says the task is complete"},
+    {"state": "Deployed to staging successfully; the work is done.", "expect": "Yes: says the task is complete"},
+    {"state": "The refactor is complete and behaviour is unchanged.", "expect": "Yes: says the task is complete"},
+    {"state": "Wrapped up the dependency upgrade, lockfile regenerated, CI green.", "expect": "Yes: says the task is complete"},
+    {"state": "That's all fixed now.", "expect": "Yes: says the task is complete"},
+    {"state": "Next I'll update the tests to cover the new branch.", "expect": "No: work is still in progress, blocked, or a question is asked"},
+    {"state": "I'm blocked: the API key is missing, can you provide it?", "expect": "No: work is still in progress, blocked, or a question is asked"},
+    {"state": "Should the button be blue or green?", "expect": "No: work is still in progress, blocked, or a question is asked"},
+    {"state": "Reading the config files to understand the build.", "expect": "No: work is still in progress, blocked, or a question is asked"},
+    {"state": "The first half is done; the database layer is still left.", "expect": "No: work is still in progress, blocked, or a question is asked"},
+    {"state": "Tests are failing with a timeout, investigating.", "expect": "No: work is still in progress, blocked, or a question is asked"},
+    {"state": "I found three possible causes. Which one should I pursue?", "expect": "No: work is still in progress, blocked, or a question is asked"},
+    {"state": "Let me run the linter before continuing.", "expect": "No: work is still in progress, blocked, or a question is asked"},
+    {"state": "Here's my plan: first extract the helper, then update callers.", "expect": "No: work is still in progress, blocked, or a question is asked"},
+    {"state": "The build still fails on arm64; I'm looking into it.", "expect": "No: work is still in progress, blocked, or a question is asked"}
+  ]
+}

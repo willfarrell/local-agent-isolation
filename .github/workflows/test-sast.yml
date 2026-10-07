@@ -69,7 +69,7 @@ jobs:
       - name: Setup buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Build
-        run: docker buildx bake -f docker-build.hcl paperclip local-system-2 --load
+        run: docker buildx bake -f docker-build.hcl paperclip local-system-1 local-system-2 --load
       # With the launcher's flags (agents.zsh), so this is how users run them.
       - name: Smoke and security tests
         run: |
@@ -97,6 +97,10 @@ jobs:
           docker run --rm --read-only --cap-drop ALL --security-opt no-new-privileges:true \
             --entrypoint ollama willfarrell/local-system-2 --version >/dev/null \
             || { echo "::error::local-system-2 does not start"; exit 1; }
+          # Imports only: the weights are fetched at first start, not in CI.
+          docker run --rm --read-only --cap-drop ALL --security-opt no-new-privileges:true \
+            --entrypoint python3 willfarrell/local-system-1 -c 'import numpy, onnxruntime, tokenizers' \
+            || { echo "::error::local-system-1 does not start"; exit 1; }
       # DAST: paperclip as compose runs it, scanned by the ZAP baseline. -I: warnings
       # are reported, not fatal; only rules ZAP itself marks FAIL break the build.
       - name: DAST (ZAP baseline, paperclip)
@@ -121,7 +125,17 @@ jobs:
           path: ${{ runner.temp }}/zap/zap-report.html
           retention-days: 14
           if-no-files-found: ignore
-      # paperclip is herdr (every harness on tools) plus paperclip, so it and local-system-2 cover every image.
+      # paperclip is herdr (every harness on tools) plus paperclip, so it and the local-system images cover every image.
+      - name: Trivy (local-system-1)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: willfarrell/local-system-1:latest
+          scanners: vuln
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          hide-progress: true
+          exit-code: 1
       - name: Trivy (paperclip)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:

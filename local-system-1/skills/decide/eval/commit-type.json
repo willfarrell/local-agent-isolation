@@ -1,0 +1,30 @@
+{
+  "question": "Which conventional commit type fits this change?",
+  "options": ["feat: adds a new user-facing feature", "fix: fixes a bug", "docs: documentation only", "test: adds or changes tests only", "refactor: restructures code without changing behaviour", "chore: build, dependencies, tooling or CI"],
+  "cases": [
+    {"state": "Add dark mode toggle to the settings page", "expect": "feat: adds a new user-facing feature"},
+    {"state": "Allow users to export their data as CSV", "expect": "feat: adds a new user-facing feature"},
+    {"state": "Support login with GitHub OAuth", "expect": "feat: adds a new user-facing feature"},
+    {"state": "New endpoint GET /api/invoices/:id/pdf", "expect": "feat: adds a new user-facing feature"},
+    {"state": "Fix crash when the cart is empty at checkout", "expect": "fix: fixes a bug"},
+    {"state": "Handle null user in session middleware, was throwing 500", "expect": "fix: fixes a bug"},
+    {"state": "Correct off-by-one in pagination so the last page shows", "expect": "fix: fixes a bug"},
+    {"state": "Timezone bug: due dates showed a day early for UTC-5 users", "expect": "fix: fixes a bug"},
+    {"state": "Update README with install steps for Windows", "expect": "docs: documentation only"},
+    {"state": "Document the retry options in the API reference", "expect": "docs: documentation only"},
+    {"state": "Fix typos in CONTRIBUTING.md", "expect": "docs: documentation only"},
+    {"state": "Add JSDoc comments to the public client methods", "expect": "docs: documentation only"},
+    {"state": "Add unit tests for the date parser", "expect": "test: adds or changes tests only"},
+    {"state": "Cover the refund flow with integration tests", "expect": "test: adds or changes tests only"},
+    {"state": "Make flaky websocket test deterministic with fake timers", "expect": "test: adds or changes tests only"},
+    {"state": "Extract validation logic into its own module, no behaviour change", "expect": "refactor: restructures code without changing behaviour"},
+    {"state": "Rename getUsr to getUser across the codebase", "expect": "refactor: restructures code without changing behaviour"},
+    {"state": "Replace nested callbacks with async/await in the loader", "expect": "refactor: restructures code without changing behaviour"},
+    {"state": "Split the 900-line OrderService into smaller classes", "expect": "refactor: restructures code without changing behaviour"},
+    {"state": "Bump eslint from 9.1 to 9.2", "expect": "chore: build, dependencies, tooling or CI"},
+    {"state": "Add Node 24 to the CI matrix", "expect": "chore: build, dependencies, tooling or CI"},
+    {"state": "Configure Renovate to group minor updates", "expect": "chore: build, dependencies, tooling or CI"},
+    {"state": "Pin the Docker base image by digest", "expect": "chore: build, dependencies, tooling or CI"},
+    {"state": "Update package-lock.json", "expect": "chore: build, dependencies, tooling or CI"}
+  ]
+}

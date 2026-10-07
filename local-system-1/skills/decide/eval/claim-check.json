@@ -1,0 +1,24 @@
+{
+  "question": "How does the source text relate to the claim?",
+  "options": ["Supports: the source states the claim or directly implies it", "Contradicts: the source states the opposite of the claim", "Says nothing: the source does not address the claim"],
+  "cases": [
+    {"state": "Claim: The service listens on port 8080. Source: The server binds to 0.0.0.0:8080 by default.", "expect": "Supports: the source states the claim or directly implies it"},
+    {"state": "Claim: Node 18 is required. Source: engines: { node: '>=18' }", "expect": "Supports: the source states the claim or directly implies it"},
+    {"state": "Claim: The cache expires after one hour. Source: Entries have a TTL of 3600 seconds.", "expect": "Supports: the source states the claim or directly implies it"},
+    {"state": "Claim: The function returns null on error. Source: On failure, getUser returns null instead of throwing.", "expect": "Supports: the source states the claim or directly implies it"},
+    {"state": "Claim: Uploads are limited to 10 MB. Source: The maximum upload size is 10 MB.", "expect": "Supports: the source states the claim or directly implies it"},
+    {"state": "Claim: The tool supports Windows. Source: Windows builds are provided for every release.", "expect": "Supports: the source states the claim or directly implies it"},
+    {"state": "Claim: The service listens on port 8080. Source: The server binds to port 3000 unless PORT is set.", "expect": "Contradicts: the source states the opposite of the claim"},
+    {"state": "Claim: Node 18 is supported. Source: Node versions below 20 are not supported.", "expect": "Contradicts: the source states the opposite of the claim"},
+    {"state": "Claim: The API is free. Source: API access requires a paid plan.", "expect": "Contradicts: the source states the opposite of the claim"},
+    {"state": "Claim: Passwords are stored in plain text. Source: Passwords are hashed with argon2id before storage.", "expect": "Contradicts: the source states the opposite of the claim"},
+    {"state": "Claim: The job runs daily. Source: The job is scheduled to run once a week on Sundays.", "expect": "Contradicts: the source states the opposite of the claim"},
+    {"state": "Claim: The library has no dependencies. Source: It depends on lodash and axios.", "expect": "Contradicts: the source states the opposite of the claim"},
+    {"state": "Claim: The service listens on port 8080. Source: Logs are written to /var/log/app.log.", "expect": "Says nothing: the source does not address the claim"},
+    {"state": "Claim: Node 18 is required. Source: The project is licensed under MIT.", "expect": "Says nothing: the source does not address the claim"},
+    {"state": "Claim: The cache expires after one hour. Source: The cache is stored in Redis.", "expect": "Says nothing: the source does not address the claim"},
+    {"state": "Claim: Uploads are limited to 10 MB. Source: Uploaded files are scanned for viruses.", "expect": "Says nothing: the source does not address the claim"},
+    {"state": "Claim: The API is free. Source: The API returns JSON.", "expect": "Says nothing: the source does not address the claim"},
+    {"state": "Claim: The job runs daily. Source: The job sends a summary email to admins.", "expect": "Says nothing: the source does not address the claim"}
+  ]
+}
