@@ -56,7 +56,7 @@ jobs:
       images: ${{ steps.digests.outputs.images }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
         with:
           # audit: builds reach docker hub, alpine, npm, PyPI and GitHub release CDNs.
           egress-policy: audit
@@ -133,7 +133,7 @@ jobs:
       id-token: write # cosign keyless signing
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
         with:
           egress-policy: block
           disable-sudo: true
@@ -171,7 +171,7 @@ jobs:
         include: ${{ fromJSON(needs.build.outputs.images) }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
         with:
           egress-policy: block
           disable-sudo: true
@@ -220,7 +220,7 @@ jobs:
       contents: write # create the GitHub Release
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
         with:
           egress-policy: block
           disable-sudo: true
