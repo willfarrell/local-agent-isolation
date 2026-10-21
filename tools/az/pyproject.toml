@@ -1,0 +1,12 @@
+# Azure CLI for the tools image. Dependabot bumps azure-cli here and in uv.lock.
+[project]
+name = "tools-az"
+version = "0"
+requires-python = "==3.13.*"
+dependencies = ["azure-cli==2.91.0"]
+
+[tool.uv]
+package = false
+# azure-cli pins ~40 dependencies to exact betas (azure-appconfiguration==1.10.0b1, ...),
+# and uv only honours a beta pin made by a top-level requirement otherwise.
+prerelease = "allow"

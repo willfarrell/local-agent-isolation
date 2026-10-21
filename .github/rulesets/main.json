@@ -45,6 +45,7 @@
           { "context": "CodeQL: SAST", "integration_id": 15368 },
           { "context": "semgrep: SAST", "integration_id": 15368 },
           { "context": "actionlint: GitHub Actions lint", "integration_id": 15368 },
+          { "context": "Launchers: zsh and PowerShell parse", "integration_id": 15368 },
           { "context": "zizmor: GitHub Actions SAST", "integration_id": 15368 },
           { "context": "TruffleHog: secrets", "integration_id": 15368 },
           { "context": "gitleaks: secrets", "integration_id": 15368 }

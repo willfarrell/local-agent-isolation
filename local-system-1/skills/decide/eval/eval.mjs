@@ -8,7 +8,7 @@ import { decide } from '../decide.mjs'
 
 const here = new URL('.', import.meta.url)
 const files = process.argv.slice(2).length ? process.argv.slice(2) : readdirSync(here).filter(f => f.endsWith('.json'))
-// ponytail: chars/4 token estimate, plus a minimal system prompt and a one-word answer.
+// chars/4 token estimate, plus a minimal system prompt and a one-word answer.
 const apiTokens = t => Math.ceil((t.question.length + t.options.join(' ').length + JSON.stringify(t.state).length) / 4) + 60
 
 for (const f of files) {

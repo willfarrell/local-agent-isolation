@@ -1,0 +1,7 @@
+{
+  "name": "tools-mcp",
+  "private": true,
+  "dependencies": {
+    "context-mode": "1.0.169"
+  }
+}

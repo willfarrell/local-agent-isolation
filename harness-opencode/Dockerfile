@@ -1,36 +1,54 @@
-# syntax=docker/dockerfile:1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32
+# syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 # check=error=true
 
-ARG NODE_IMAGE=node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1
-ARG OPENCODE_VERSION=1.18.32
-ARG NPM_BEFORE=2026-09-22T21:00:00Z
-
-FROM ${NODE_IMAGE} AS build
-ARG OPENCODE_VERSION
-ARG NPM_BEFORE
+FROM node:26-alpine@sha256:6f08a523443ddedf52941874c203475b0ad503e859ad70cb26ab8be9a517dbd5 AS build
 # pipefail: a failing od in `od | tr` is otherwise masked by tr's exit status.
 SHELL ["/bin/ash", "-eu", "-o", "pipefail", "-c"]
-# opencode.exe is a stub until postinstall hardlinks the musl binary over it; assert ELF before pruning.
-RUN bin=/opt/opencode/lib/node_modules/opencode-ai/bin/opencode.exe \
- && npm install -g --allow-scripts=opencode-ai --before="${NPM_BEFORE}" --prefix /opt/opencode "opencode-ai@${OPENCODE_VERSION}" \
- && { [ "$(od -An -tx1 -N4 "$bin" | tr -d ' ')" = "7f454c46" ] \
-      || { echo "FATAL: $bin is not ELF; postinstall did not place the native binary" >&2; exit 1; }; } \
- && find /opt/opencode/lib/node_modules/opencode-ai/node_modules -maxdepth 1 \
-      -name 'opencode-*' -exec rm -rf {} +
+WORKDIR /opt/opencode
+COPY package.json package-lock.json ./
+# opencode.exe is a stub until postinstall hardlinks the musl binary over it. No other lifecycle
+# script runs: --ignore-scripts, then that one by path. Assert the ELF before pruning.
+RUN npm ci --omit=dev --ignore-scripts
+WORKDIR /opt/opencode/node_modules/opencode-ai
+RUN node ./postinstall.mjs \
+ && { [ "$(od -An -tx1 -N4 bin/opencode.exe | tr -d ' ')" = "7f454c46" ] \
+      || { echo "FATAL: bin/opencode.exe is not ELF; postinstall did not place the native binary" >&2; exit 1; }; } \
+ && find /opt/opencode/node_modules -mindepth 1 -maxdepth 1 \
+      -name 'opencode-*' ! -name opencode-ai -exec rm -rf {} +
+WORKDIR /opt/opencode
 
 # Placeholder for docker-build.hcl's named context (tools/Dockerfile); a bare `docker build` fails here by design.
 FROM scratch AS tools
 
 FROM tools AS runtime
-USER root
+USER 0:0
 
 COPY --from=build --chown=root:root /opt/opencode /opt/opencode
+RUN ln -s /opt/opencode/node_modules/.bin/opencode /usr/local/bin/opencode
 
-RUN { find / -xdev -perm /6000 -type f -exec chmod a-s {} + 2>/dev/null || true; }
+COPY <<'EOF' /etc/agents/links.d/harness-opencode
+/.agents/INSTRUCTIONS.md=.config/opencode/AGENTS.md
+/.agents/settings.opencode.json=.config/opencode/opencode.json
+/.agents/agents=.config/opencode/agents
+/.agents/commands=.config/opencode/commands
+EOF
 
-# home-init wipes ~/.config/opencode (auto-loaded plugins) and relinks it; login in ~/.local/share survives.
-ENV PATH=/opt/opencode/bin:$PATH \
-    AGENTS_LINKS="${AGENTS_LINKS} /.agents/INSTRUCTIONS.md=.config/opencode/AGENTS.md /.agents/settings.opencode.json=.config/opencode/opencode.json /.agents/agents=.config/opencode/agents /.agents/commands=.config/opencode/commands"
+# The login. Not the session database in the home, used only where the launchers set no OPENCODE_DB: shared by
+# every directory, it would carry one repo's sessions into another. Nor bin/, tools opencode downloads and runs.
+COPY <<'EOF' /etc/agents/logins.d/harness-opencode
+.local/share/opencode/auth.json
+EOF
+
+# That database (opencode.db, or opencode-<channel>.db, with -wal/-shm) stays only in an orchestrator's home,
+# which is per workspace.
+COPY <<'EOF' /etc/agents/keep.d/harness-opencode
+.local/share/opencode/opencode*.db*
+.local/share/opencode/storage
+EOF
+
+# Last root step: no setuid/setgid files, and nothing world-writable but /tmp (a tmpfs at runtime).
+RUN { find / -xdev -perm /6000 -type f -exec chmod a-s {} + 2>/dev/null || true; } \
+ && { find / -xdev -perm -0002 ! -type l ! -path /tmp -exec chmod o-w {} + 2>/dev/null || true; }
 
 USER 1000:1000
 ENTRYPOINT ["/sbin/tini", "--", "home-init", "opencode"]

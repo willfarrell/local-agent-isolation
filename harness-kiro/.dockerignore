@@ -1,0 +1,11 @@
+# Everything not listed here is sent to the builder. Keep secrets and bulk out.
+.git
+.gitignore
+node_modules
+*.env
+.env*
+*.log
+Dockerfile*
+docker-build.hcl
+.dockerignore
+release.json

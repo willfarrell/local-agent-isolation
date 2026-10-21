@@ -27,6 +27,8 @@ PORT = int(os.environ.get("JULIA_PORT", "11435"))
 TYPES = {"choice": 0, "score": 1, "noul": 2}
 MAX_LENGTH, HEAD_LENGTH, OPTION_TOKENS = 1024, 256, 48
 MAX_ROWS, MAX_BODY = 64, 1 << 20
+# DNS rebinding: a web page can reach the loopback port under its own hostname.
+HOSTS = {"localhost", "127.0.0.1", "local-system-1"}
 
 
 def fetch():
@@ -57,13 +59,13 @@ class Julia:
     def encode(self, text):
         return self.tok.encode(text, add_special_tokens=False).ids
 
-    # ponytail: strict mode only, as upstream defaults; overflow is a 400, never a silent truncation.
+    # strict mode only, as upstream defaults; overflow is a 400, never a silent truncation.
     def serialize(self, row):
         kind, question, state, options = row.get("type"), row.get("question"), row.get("state"), row.get("options")
         if (
             kind not in TYPES
             or not isinstance(question, str)
-            # ponytail: string state only; upstream's pythonJSON for dict/list state is not ported.
+            # string state only; upstream's pythonJSON for dict/list state is not ported.
             or not isinstance(state, str)
             or not isinstance(options, list)
             or not 2 <= len(options) <= 20
@@ -143,6 +145,14 @@ def check(julia):
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
+    def parse_request(self):
+        if not super().parse_request():
+            return False
+        if self.headers.get("Host", "").split(":")[0] in HOSTS:
+            return True
+        self.reply(421, {"error": "unexpected Host header"})
+        return False
+
     def reply(self, code, body):
         data = json.dumps(body).encode()
         self.send_response(code)
@@ -174,5 +184,5 @@ if __name__ == "__main__":
     if sys.argv[1:] == ["check"]:
         check(JULIA)
     else:
-        # ponytail: one request at a time; ThreadingHTTPServer if callers queue behind each other.
+        # one request at a time; ThreadingHTTPServer if callers queue behind each other.
         http.server.HTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

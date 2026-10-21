@@ -1,7 +1,9 @@
-# Builds every image for linux/amd64 and linux/arm64 and pushes it to Docker
-# Hub as willfarrell/<target>, tagged `latest` plus the short commit (a `0.0.0` git
-# tag publishes under that tag instead of `latest`). The build itself is
-# docker-build.hcl's `release` group, the same command as a local release.
+# Builds every shipped image for linux/amd64 and linux/arm64 and pushes it to
+# Docker Hub as willfarrell/<target>, tagged `latest` plus the short commit (a
+# `0.0.0` git tag publishes under that tag instead of `latest`). The build
+# itself is docker-build.hcl's `release` target, the same command as a local
+# release; it leaves out LOCAL_ONLY, the images whose license bars
+# redistribution.
 #
 # Stages, each its own job so no stage holds more than it needs:
 #   build       builds and pushes by digest; no OIDC token, so it cannot sign
@@ -15,9 +17,14 @@
 # only lets a commit onto main through a pull request whose checks passed on it
 # up to date with main. A version tag (`0.0.0`) must point at a commit on main.
 #
-# Needs one repository secret, DOCKERHUB_TOKEN: a Docker Hub personal access
-# token for willfarrell with Read & Write scope. Docker Hub creates each
-# repository on its first push, with the account's default visibility.
+# DOCKERHUB_TOKEN, a Docker Hub personal access token for willfarrell with
+# Read & Write scope, is a secret of the `release` environment, whose
+# deployment refs are main and the version tags: a workflow on any other
+# branch cannot read it. Not as a repository secret, which every branch can.
+# provenance is the exception: a job calling a reusable workflow cannot name an
+# environment, so it takes the repository secret DOCKERHUB_PROVENANCE_TOKEN.
+# Docker Hub creates each repository on its first push, with the account's
+# default visibility.
 #
 # Verify a pulled image (use --source-tag 1.2.3 for a tagged release):
 #   cosign verify willfarrell/<target> \
@@ -49,6 +56,8 @@ concurrency:
 
 jobs:
   build:
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+    environment: release
     runs-on: ubuntu-24.04
     # arm64 builds run under QEMU, and herdr and paperclip wait on every harness.
     timeout-minutes: 240
@@ -56,20 +65,38 @@ jobs:
       images: ${{ steps.digests.outputs.images }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
-          # audit: builds reach docker hub, alpine, npm, PyPI and GitHub release CDNs.
-          egress-policy: audit
+          egress-policy: block
           disable-sudo: true
           disable-telemetry: true
+          # Docker Hub (bases, buildkit, binfmt, push), alpine, npm, PyPI, GitHub
+          # clones and release assets (herdr, uv's Python), node-gyp headers.
+          allowed-endpoints: >
+            api.github.com:443
+            auth.docker.io:443
+            codeload.github.com:443
+            dl-cdn.alpinelinux.org:443
+            docker-images-prod.6aa30f8b08e16409b46e0173d6de2f56.r2.cloudflarestorage.com:443
+            files.pythonhosted.org:443
+            github.com:443
+            index.docker.io:443
+            nodejs.org:443
+            objects.githubusercontent.com:443
+            production.cloudflare.docker.com:443
+            pypi.org:443
+            registry-1.docker.io:443
+            registry.npmjs.org:443
+            release-assets.githubusercontent.com:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
 
-      # No tag ruleset, so this is what keeps a tag from shipping a commit that
-      # never passed main's checks.
+      # The tag ruleset (.github/rulesets/tags.json) stops a tag moving once
+      # pushed; this keeps a new one from shipping a commit that never passed
+      # main's checks.
       - name: Tag is on main
         if: github.ref_type == 'tag'
         run: git merge-base --is-ancestor HEAD origin/main
@@ -119,10 +146,11 @@ jobs:
       digest: ${{ matrix.digest }}
       registry-username: willfarrell
     secrets:
-      registry-password: ${{ secrets.DOCKERHUB_TOKEN }}
+      registry-password: ${{ secrets.DOCKERHUB_PROVENANCE_TOKEN }}
 
   sign:
     needs: build
+    environment: release
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
@@ -133,7 +161,7 @@ jobs:
       id-token: write # cosign keyless signing
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: block
           disable-sudo: true
@@ -164,6 +192,7 @@ jobs:
 
   verify:
     needs: [build, provenance, sign]
+    environment: release
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
@@ -171,7 +200,7 @@ jobs:
         include: ${{ fromJSON(needs.build.outputs.images) }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: block
           disable-sudo: true
@@ -220,7 +249,7 @@ jobs:
       contents: write # create the GitHub Release
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: block
           disable-sudo: true

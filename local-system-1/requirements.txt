@@ -1,4 +1,4 @@
 # musllinux wheels only (x86_64, aarch64): pip --require-hashes refuses anything else.
-tokenizers==0.23.2 \
-    --hash=sha256:5c56bda1511921587789163e524d196ed8284174ac23abd7685d5ea8da6c4718 \
-    --hash=sha256:eb2f9c8a24da020ea8c11a01a19c1c2547912d92121ae4a01cfbca46125dee40
+tokenizers==0.23.3 \
+    --hash=sha256:e05ab7baf7f47b406a95fea6f3b0a484b2ddcd9e1d14b68844c457eb755085a3 \
+    --hash=sha256:114e2b55ed177179d59f4ab98200a4471e11e78f9e4b5a922d146740f96fcf52

@@ -1,23 +1,19 @@
-# syntax=docker/dockerfile:1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32
+# syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 # check=error=true
 
-ARG NODE_IMAGE=node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1
-ARG PAPERCLIP_VERSION=2026.916.1
-ARG NPM_BEFORE=2026-09-22T21:00:00Z
-
 # Never $BUILDPLATFORM: sharp is per-arch/libc. @embedded-postgres is glibc-only, so the DB is compose's paperclip-db.
-FROM ${NODE_IMAGE} AS build
-ARG PAPERCLIP_VERSION
-ARG NPM_BEFORE
-RUN npm install -g --ignore-scripts --before="${NPM_BEFORE}" --prefix /opt/paperclip paperclipai@${PAPERCLIP_VERSION} \
+FROM node:26-alpine@sha256:6f08a523443ddedf52941874c203475b0ad503e859ad70cb26ab8be9a517dbd5 AS build
+WORKDIR /opt/paperclip
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts \
  && find /opt/paperclip -type d -name '@embedded-postgres' -prune -exec rm -rf {} + \
- && test -f /opt/paperclip/lib/node_modules/paperclipai/node_modules/@paperclipai/server/dist/index.js
+ && test -f /opt/paperclip/node_modules/@paperclipai/server/dist/index.js
 
 # Placeholder for docker-build.hcl's named context: herdr already ships every harness paperclip runs.
 FROM scratch AS herdr
 
 FROM herdr AS runtime
-USER root
+USER 0:0
 
 COPY --from=build --chown=root:root /opt/paperclip /opt/paperclip
 
@@ -46,15 +42,26 @@ net.createServer(c => {
 else
   export PAPERCLIP_BIND=lan
 fi
-exec node /opt/paperclip/lib/node_modules/paperclipai/node_modules/@paperclipai/server/dist/index.js
+exec node /opt/paperclip/node_modules/@paperclipai/server/dist/index.js
 EOF
 
-RUN { find / -xdev -perm /6000 -type f -exec chmod a-s {} + 2>/dev/null || true; }
+COPY <<'EOF' /etc/agents/links.d/paperclip
+/.agents/settings.paperclip.json=.paperclip/instances/default/config.json
+EOF
 
-# No login by default; PAPERCLIP_DEPLOYMENT_MODE=authenticated turns it back on.
-ENV PATH=/opt/paperclip/bin:$PATH \
-    AGENTS_LINKS="${AGENTS_LINKS} /.agents/settings.paperclip.json=.paperclip/instances/default/config.json" \
-    PAPERCLIP_DEPLOYMENT_MODE=local_trusted \
+# ~/.paperclip is the instance (auth secret, storage, skills, agent homes and logins); nothing mounts claude sessions
+# here. .claude/projects stays whole, memory included: compose gives each workspace a home volume of its own, so
+# what one repo's agents write there no other repo's load. The harnesses' logins.d are kept too (home-init).
+COPY <<'EOF' /etc/agents/keep.d/paperclip
+.paperclip
+.claude/projects
+EOF
+
+# Not node_modules/.bin on PATH: it also holds the bundled codex, which would shadow herdr's.
+RUN ln -s /opt/paperclip/node_modules/.bin/paperclipai /usr/local/bin/paperclipai
+
+# local_trusted (no login) is admin for every container that reaches the port, host.docker.internal included.
+ENV PAPERCLIP_DEPLOYMENT_MODE=authenticated \
     PORT=3100 \
     PAPERCLIP_TELEMETRY_DISABLED=1
 
@@ -62,6 +69,10 @@ EXPOSE 3100
 # --spider writes nothing, which a read-only rootfs requires.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
   CMD ["/usr/bin/wget", "-q", "--spider", "http://127.0.0.1:3100/api/health"]
+
+# Last root step: no setuid/setgid files, and nothing world-writable but /tmp (a tmpfs at runtime).
+RUN { find / -xdev -perm /6000 -type f -exec chmod a-s {} + 2>/dev/null || true; } \
+ && { find / -xdev -perm -0002 ! -type l ! -path /tmp -exec chmod o-w {} + 2>/dev/null || true; }
 
 USER 1000:1000
 ENTRYPOINT ["/sbin/tini", "--", "home-init", "paperclip-server"]

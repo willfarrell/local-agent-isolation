@@ -1,0 +1,7 @@
+{
+  "name": "paperclip",
+  "private": true,
+  "dependencies": {
+    "paperclipai": "2026.1012.0"
+  }
+}

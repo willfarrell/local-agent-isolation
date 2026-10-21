@@ -22,7 +22,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: block
           disable-sudo: true
@@ -56,44 +56,134 @@ jobs:
     timeout-minutes: 90
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
-          # audit: builds reach docker hub, alpine, npm, PyPI and GitHub release CDNs.
-          egress-policy: audit
+          egress-policy: block
           disable-sudo: true
           disable-telemetry: true
+          # The release build's list, plus Kiro's CDN (built here, never released),
+          # Trivy's binary and databases, and upload-artifact's results service.
+          allowed-endpoints: >
+            api.github.com:443
+            auth.docker.io:443
+            *.blob.core.windows.net:443
+            check.trivy.dev:443
+            codeload.github.com:443
+            desktop-release.q.us-east-1.amazonaws.com:443
+            dl-cdn.alpinelinux.org:443
+            docker-images-prod.6aa30f8b08e16409b46e0173d6de2f56.r2.cloudflarestorage.com:443
+            files.pythonhosted.org:443
+            get.trivy.dev:443
+            ghcr.io:443
+            github.com:443
+            index.docker.io:443
+            mirror.gcr.io:443
+            nodejs.org:443
+            objects.githubusercontent.com:443
+            pkg-containers.githubusercontent.com:443
+            production.cloudflare.docker.com:443
+            pypi.org:443
+            registry-1.docker.io:443
+            registry.npmjs.org:443
+            release-assets.githubusercontent.com:443
+            results-receiver.actions.githubusercontent.com:443
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Setup buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # The launchers' AGENTS_HARNESSES, harness-kiro included: CI builds it
+      # locally and never pushes it. herdr is last in that list.
+      - name: Harness list
+        id: harnesses
+        run: echo "list=$(sed -n 's/^AGENTS_HARNESSES=(\(.*\))$/\1/p' agents.zsh)" >> "$GITHUB_OUTPUT"
       - name: Build
-        run: docker buildx bake -f docker-build.hcl paperclip local-system-1 local-system-2 --load
-      # With the launcher's flags (agents.zsh), so this is how users run them.
+        env:
+          HARNESSES: ${{ steps.harnesses.outputs.list }}
+        run: |
+          # shellcheck disable=SC2086 # the list splits into bake targets
+          docker buildx bake -f docker-build.hcl $HARNESSES paperclip local-system-1 local-system-2 --load
+      # With the launcher's flags (AGENTS_HARDENING in agents.zsh), so this is how users run them.
       - name: Smoke and security tests
+        env:
+          HARNESSES: ${{ steps.harnesses.outputs.list }}
         run: |
           mkdir -p "$RUNNER_TEMP/agents"
+          # shellcheck disable=SC2054 # the commas are --tmpfs mount options, not array separators
+          hardening=(--user 1000:1000 --read-only --cap-drop ALL --security-opt no-new-privileges:true
+            --pids-limit 4096 --ipc private --tmpfs /tmp:exec,nosuid,nodev)
+          for image in $HARNESSES; do
+            # docker-build.hcl tags the never-released kiro local/, not willfarrell/.
+            ref=willfarrell/$image
+            [ "$image" = harness-kiro ] && ref=local/$image
+            docker run --rm "${hardening[@]}" --tmpfs /home:uid=1000,gid=1000,nosuid,nodev \
+              -v "$RUNNER_TEMP/agents:/.agents:ro" "$ref" --version >/dev/null \
+              || { echo "::error::$image does not start"; exit 1; }
+          done
+          # paperclip is herdr plus paperclip, so its copies of the harnesses must run too.
           run() {
-            docker run --rm --read-only --tmpfs /tmp:exec --tmpfs /home:uid=1000,gid=1000 \
-              --cap-drop ALL --security-opt no-new-privileges:true \
+            docker run --rm "${hardening[@]}" --tmpfs /home:uid=1000,gid=1000,nosuid,nodev \
               -v "$RUNNER_TEMP/agents:/.agents:ro" \
               --entrypoint /sbin/tini willfarrell/paperclip -- home-init "$@"
           }
-          for bin in claude codex copilot gemini opencode pi hermes herdr; do
-            run "$bin" --version >/dev/null || { echo "::error::$bin does not start"; exit 1; }
+          for bin in claude codex copilot gemini opencode pi hermes herdr gh aws az; do
+            run "$bin" --version >/dev/null || { echo "::error::$bin does not start in paperclip"; exit 1; }
           done
           test "$(run id -u)" = 1000 || { echo "::error::not uid 1000"; exit 1; }
           suid=$(run sh -c 'find / -xdev -perm /6000 -type f 2>/dev/null || true')
           test -z "$suid" || { echo "::error::setuid/setgid files: $suid"; exit 1; }
           test "$(run readlink /home/.claude/settings.json)" = /.agents/settings.claude.json \
             || { echo "::error::settings.json is not linked to read-only /.agents"; exit 1; }
-          # home-init scrub: what a session plants in the home volume is gone at the next start.
-          docker run --rm -v smoke-home:/home --entrypoint sh willfarrell/paperclip \
-            -c 'mkdir -p /home/.claude/rules && touch /home/.bashrc /home/.claude/rules/x'
-          docker run --rm -v smoke-home:/home --entrypoint /sbin/tini willfarrell/paperclip -- \
-            home-init sh -c 'test ! -e /home/.bashrc && test ! -e /home/.claude/rules' \
-            || { echo "::error::home-init left planted files"; exit 1; }
+          # home-init with no login store (an orchestrator's kept home): a login and a file in a
+          # kept session store ("dir/") survive the next start; an unlisted file and a symlink
+          # planted in the home volume are gone.
+          docker run --rm "${hardening[@]}" -v smoke-home:/home --entrypoint sh willfarrell/harness-claude-code \
+            -c 'mkdir -p /home/.claude/rules /home/.claude/projects/x && touch /home/.claude/.credentials.json \
+                  /home/.claude/settings.local.json /home/.claude/rules/x /home/.claude/projects/x/y.jsonl \
+                && ln -s /tmp/rc /home/.bashrc'
+          docker run --rm "${hardening[@]}" -v smoke-home:/home -v "$RUNNER_TEMP/agents:/.agents:ro" \
+            --entrypoint /sbin/tini willfarrell/harness-claude-code -- home-init sh -c '
+              test -f /home/.claude/.credentials.json || { echo "kept login removed"; exit 1; }
+              test -f /home/.claude/projects/x/y.jsonl || { echo "kept session store lost"; exit 1; }
+              test ! -L /home/.bashrc && test ! -e /home/.claude/settings.local.json && test ! -e /home/.claude/rules \
+                || { echo "planted files left"; exit 1; }' \
+            || { echo "::error::home-init keep list failed"; exit 1; }
+          docker volume rm smoke-home >/dev/null
+          # home-init with the read-only login store a harness run mounts: a login is copied in, a
+          # symlink in the store is not followed, ~/.claude.json loses its env (applied to
+          # process.env at launch), and a pi auth.json holding a shell command refuses the start.
+          # herdr: it has both claude's and pi's logins.d.
+          logins() {
+            docker run --rm "${hardening[@]}" -v smoke-logins:/logins --entrypoint sh willfarrell/herdr -c "$1"
+          }
+          start() {
+            docker run --rm "${hardening[@]}" --tmpfs /home:uid=1000,gid=1000,nosuid,nodev \
+              -v smoke-logins:/logins:ro -v "$RUNNER_TEMP/agents:/.agents:ro" \
+              --entrypoint /sbin/tini willfarrell/herdr -- home-init "$@"
+          }
+          logins 'mkdir -p /logins/.claude /logins/.codex \
+            && echo "{\"userID\":\"u\",\"env\":{\"NODE_OPTIONS\":\"--require /tmp/x\"}}" > /logins/.claude.json \
+            && echo tok > /logins/.claude/.credentials.json && ln -s /etc/hostname /logins/.codex/auth.json'
+          start sh -c '
+              grep -qx tok /home/.claude/.credentials.json || { echo "login not copied in"; exit 1; }
+              test ! -e /home/.codex/auth.json && test ! -L /home/.codex/auth.json || { echo "symlink in the store followed"; exit 1; }
+              jq -e ".userID == \"u\" and (has(\"env\") | not)" /home/.claude.json >/dev/null || { echo "claude.json env kept"; exit 1; }' \
+            || { echo "::error::home-init login copy-in failed"; exit 1; }
+          logins 'mkdir -p /logins/.pi/agent && echo "{\"p\":{\"type\":\"api_key\",\"key\":\"!touch /tmp/x\"}}" > /logins/.pi/agent/auth.json'
+          if start true; then echo "::error::a pi auth.json holding a shell command was not refused"; exit 1; fi
+          docker volume rm smoke-logins >/dev/null
+          # agents-logins-save after a run: concurrent Claude runs void each other's refresh tokens, so a
+          # login blanked by a failed refresh, or one expiring before the stored one, leaves the stored one.
+          docker run --rm "${hardening[@]}" --network none --tmpfs /home:uid=1000,gid=1000,nosuid,nodev \
+            --tmpfs /logins:uid=1000,gid=1000,nosuid,nodev --entrypoint sh willfarrell/harness-claude-code -c '
+              cred() { mkdir -p /home/.claude && printf "{\"claudeAiOauth\":{\"refreshToken\":\"%s\",\"expiresAt\":%s}}" "$1" "$2" > /home/.claude/.credentials.json; }
+              stored() { jq -r .claudeAiOauth.refreshToken /logins/.claude/.credentials.json; }
+              cred r2 2000 && agents-logins-save /home /logins && test "$(stored)" = r2 || { echo "login not saved"; exit 1; }
+              cred "" 0 && agents-logins-save /home /logins && test "$(stored)" = r2 || { echo "blanked login saved"; exit 1; }
+              cred r1 1000 && agents-logins-save /home /logins && test "$(stored)" = r2 || { echo "older login saved"; exit 1; }
+              cred r3 3000 && agents-logins-save /home /logins && test "$(stored)" = r3 || { echo "newer login not saved"; exit 1; }' \
+            || { echo "::error::agents-logins-save Claude credentials check failed"; exit 1; }
           docker run --rm --read-only --cap-drop ALL --security-opt no-new-privileges:true \
             --entrypoint ollama willfarrell/local-system-2 --version >/dev/null \
             || { echo "::error::local-system-2 does not start"; exit 1; }
@@ -103,11 +193,15 @@ jobs:
             || { echo "::error::local-system-1 does not start"; exit 1; }
       # DAST: paperclip as compose runs it, scanned by the ZAP baseline. -I: warnings
       # are reported, not fatal; only rules ZAP itself marks FAIL break the build.
+      # compose needs a repo to mount (the launchers' AGENTS_WORKSPACE), so a throwaway one.
       - name: DAST (ZAP baseline, paperclip)
         env:
-          PAPERCLIP_WORKSPACES: ${{ runner.temp }}/workspaces
+          AGENTS_WORKSPACE: ${{ runner.temp }}/ws
+          AGENTS_WORKSPACE_IN: ${{ runner.temp }}/ws
+          AGENTS_WORKSPACE_KEY: ci
         run: |
-          mkdir -p "$HOME/.agents" "$PAPERCLIP_WORKSPACES" "$RUNNER_TEMP/zap"
+          git init -q "$AGENTS_WORKSPACE"
+          mkdir -p "$AGENTS_WORKSPACE/.git/hooks" "$HOME/.agents" "$RUNNER_TEMP/zap"
           chmod 777 "$RUNNER_TEMP/zap"
           docker compose -f compose.yaml up -d --wait --wait-timeout 300 paperclip
           curl -sf --retry 30 --retry-all-errors --retry-delay 2 -o /dev/null http://127.0.0.1:3100/
@@ -116,10 +210,14 @@ jobs:
             zap-baseline.py -t http://127.0.0.1:3100 -I -r zap-report.html
       - name: Paperclip logs
         if: failure()
+        env:
+          AGENTS_WORKSPACE: ${{ runner.temp }}/ws
+          AGENTS_WORKSPACE_IN: ${{ runner.temp }}/ws
+          AGENTS_WORKSPACE_KEY: ci
         run: docker compose -f compose.yaml logs paperclip paperclip-db
       - name: Upload ZAP report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: zap-report
           path: ${{ runner.temp }}/zap/zap-report.html
@@ -186,7 +284,7 @@ jobs:
       security-events: write
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: block
           disable-sudo: true
@@ -202,12 +300,12 @@ jobs:
         with:
           persist-credentials: false
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        uses: github/codeql-action/init@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         with:
           languages: actions
           queries: +security-and-quality
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        uses: github/codeql-action/analyze@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         with:
           category: "/language:actions"
 
@@ -219,7 +317,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: block
           disable-sudo: true
@@ -247,7 +345,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: block
           disable-sudo: true
@@ -277,7 +375,7 @@ jobs:
       security-events: write
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: block
           disable-sudo: true
@@ -292,7 +390,7 @@ jobs:
         with:
           persist-credentials: false
       - name: zizmor
-        uses: zizmorcore/zizmor-action@70fb788f84895a7701f5643d103d587e460b5c99 # v0.6.3
+        uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1
 
   # https://github.com/trufflesecurity/trufflehog
   trufflehog:
@@ -301,7 +399,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           # audit: verification calls each secret's issuing provider, so egress is data-dependent.
           egress-policy: audit
@@ -313,7 +411,7 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       - name: TruffleHog
-        uses: trufflesecurity/trufflehog@363923b901c911a9164f50b6c423f47c15372b1c # v3.97.4
+        uses: trufflesecurity/trufflehog@e76dff8a7e57d6df0c60ad8cbf5d5cba505a8fc9 # v3.99.2
         with:
           extra_args: --only-verified
 
@@ -326,7 +424,7 @@ jobs:
       GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: block
           disable-sudo: true

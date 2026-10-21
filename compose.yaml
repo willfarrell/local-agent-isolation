@@ -5,15 +5,22 @@
 #   docker compose -f compose.yaml up -d t3code
 #   docker compose -f compose.yaml up -d local-system-1   # fetches Julia-1 on first start
 #   docker compose -f compose.yaml up -d local-system-2
-#   docker compose -f compose.yaml exec local-system-2 \
-#     ollama pull hf.co/unsloth/Qwen3-0.6B-GGUF:Q4_K_M
-#   docker compose -f compose.yaml exec local-system-2 \
-#     ollama pull qwen3.5:4b-q4_K_M      # decisions (skills decide, skill-router)
+#   docker compose -f compose.yaml run --rm local-system-2-pull \
+#     pull hf.co/unsloth/Qwen3-0.6B-GGUF:Q4_K_M
+#   docker compose -f compose.yaml run --rm local-system-2-pull \
+#     pull qwen3.5:4b-q4_K_M      # decisions (skills decide, skill-router)
 #
-# Harnesses reach them on the local-agent-isolation network at
-# http://local-system-1:11435, http://local-system-2:11434/v1,
-# http://paperclip:3100 and http://t3code:3773 (pairing required).
-# local-system-1/README.md has the decision API.
+# Every call, these included, needs AGENTS_WORKSPACE (the repo, host path),
+# AGENTS_WORKSPACE_IN (that path inside the container; /c/... on Windows) and
+# AGENTS_WORKSPACE_KEY (12 hex of the sha256 of AGENTS_WORKSPACE, naming the
+# per-workspace home volumes) set, because compose interpolates the whole file.
+# The launchers set all three.
+#
+# Harnesses reach them at http://local-system-1:11435 and
+# http://local-system-2:11434/v1: the launcher joins both, when running, to each
+# run's own network under those names, and leaves it after. Not paperclip
+# or t3code: each sits on its own network, see below. local-system-1/README.md
+# has the decision API.
 #
 # Host ports, kept distinct so all run at once:
 #
@@ -32,30 +39,48 @@
 # launchers join this network by name from wherever the checkout lives.
 name: local-agent-isolation
 
+# Every service merges this. Invariants, so an agent that takes over a service
+# still holds no way out: never privileged, cap_add, pid/ipc/network_mode: host,
+# devices, a docker.sock mount or seccomp/apparmor unconfined; host binds
+# read-only except a workspace or a model folder; ports on 127.0.0.1 only.
+x-hardened: &hardened
+  read_only: true
+  user: "1000:1000"
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  pids_limit: 4096
+  ipc: private
+
 services:
   # Julia-1 typed decisions. Weights download into ~/.agents/models/julia-1 on
-  # first start, sha256-checked; the uid caveat on local-system-2's bind below
-  # applies here too.
+  # first start, sha256-checked, so the bind is read-write; its API writes
+  # nothing there. The uid caveat on local-system-2's bind below applies here too.
   local-system-1:
     image: willfarrell/local-system-1
-    read_only: true
+    <<: *hardened
     tmpfs:
-      - /tmp
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
+      - /tmp:nosuid,nodev
     # Loopback only, like local-system-2: the API has no auth.
     ports:
       - "127.0.0.1:${SYSTEM1_PORT:-11435}:11435"
     volumes:
       - ${HOME:-${USERPROFILE}}/.agents/models/julia-1:/home/model
+    # paperclip and t3code too: the skills their agents run call the decision API.
+    networks:
+      - default
+      - paperclip
+      - t3code
 
   # Weights land in ~/.agents/models on the host, never in the image. The bind
   # sits at the path the image already uses and nests inside the home volume,
-  # which works because docker applies mounts deepest-path-last. `ollama pull`
-  # is idempotent against it, so re-pulling a model already there downloads
-  # nothing. Gitignored; these are GBs.
+  # which works because docker applies mounts deepest-path-last. Gitignored;
+  # these are GBs. Read-only here: the API has no auth, so any agent could
+  # otherwise rewrite, delete or fill the shared models (/api/create, /api/pull,
+  # /api/delete). local-system-2-pull below is the only writer. ollama serve
+  # cannot create blobs/ and manifests/ in it, so they must exist first: the
+  # launchers create them, or run one pull before the first start.
   #
   # HOME on macOS and Linux; PowerShell sets no HOME environment variable, so
   # Windows falls through to USERPROFILE (C:\Users\you), which Docker Desktop
@@ -67,71 +92,125 @@ services:
   # mismatch makes this bind read-only in practice.
   local-system-2:
     image: willfarrell/local-system-2
-    read_only: true
+    <<: *hardened
     tmpfs:
-      - /tmp
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
+      - /tmp:nosuid,nodev
     # Loopback only: ollama's API has no auth, and a bare port publishes on
     # every interface, LAN included. Harnesses use the container network.
     ports:
       - "127.0.0.1:${SYSTEM2_PORT:-11434}:11434"
     volumes:
       - local-system-2-home:/home
+      - ${HOME:-${USERPROFILE}}/.agents/models:/home/.ollama/models:ro
+    environment:
+      # Startup pruning would write to the read-only models.
+      OLLAMA_NOPRUNE: "1"
+    # paperclip and t3code too: their agents use the same model endpoints.
+    networks:
+      - default
+      - paperclip
+      - t3code
+
+  # One-off writer for the models above, on a network no agent joins, its
+  # daemon on its own loopback. Args go to the ollama CLI; `ollama pull` is
+  # idempotent, so re-pulling a model already there downloads nothing:
+  #   docker compose -f compose.yaml run --rm local-system-2-pull pull qwen3.5:4b-q4_K_M
+  # The running local-system-2 sees the result without a restart.
+  local-system-2-pull:
+    image: willfarrell/local-system-2
+    <<: *hardened
+    profiles:
+      - pull
+    tmpfs:
+      - /tmp:nosuid,nodev
+    environment:
+      OLLAMA_HOST: 127.0.0.1:11434
+    volumes:
+      - local-system-2-home:/home
       - ${HOME:-${USERPROFILE}}/.agents/models:/home/.ollama/models
+    entrypoint:
+      - /sbin/tini
+      - --
+      - sh
+      - -euc
+      - |
+        ollama serve >/dev/null 2>&1 &
+        until wget -q --spider http://127.0.0.1:11434/api/version 2>/dev/null; do
+          kill -0 $$! 2>/dev/null || { echo "ollama serve exited" >&2; exit 1; }
+          sleep 1
+        done
+        ollama "$$@"
+      - ollama
+    networks:
+      - local-system-2-pull
 
   # Orchestrates the harnesses as a team of agents; the image is herdr plus the
-  # paperclip server. Login required (see its Dockerfile for why), and
-  # published on loopback only. On a fresh install, make the first admin with
-  # a one-time invite URL:
+  # paperclip server. Login required (authenticated, below); published on
+  # loopback only. Make the first admin with a one-time invite URL:
   #   docker compose -f compose.yaml exec paperclip paperclipai auth bootstrap-ceo
   #
-  # Projects point at repos under /workspaces, which is PAPERCLIP_WORKSPACES on
-  # the host (default ~/Development), read-write: the agents work there. Unlike
-  # the per-repo launcher, nothing guards .git/hooks under it, so an agent can
-  # leave a hook that your host git later runs.
-  # ponytail: one broad mount; narrow PAPERCLIP_WORKSPACES to the repos you
-  # hand to paperclip if that tradeoff matters.
+  # It sees one repo: the one the paperclip launcher was started in
+  # (AGENTS_WORKSPACE, its git toplevel), read-write at the same path as on the
+  # host, so session and project keys match the harness launchers'. Projects
+  # point at that path, not /workspaces/<repo>, and starting from another repo
+  # recreates the container. .git/hooks and .git/config are read-only over it,
+  # so an agent cannot leave something your host git later runs.
+  # .git/modules and .claude are not guarded as the launchers do: a
+  # bind whose source is absent fails or gets created. A worktree, whose .git is
+  # a file, fails to start; guard those here if paperclip gets used on one.
   #
-  # Keys pass through from the host environment, as the launchers do. Logins
+  # Keys pass through from the host environment, as the launchers do, except
+  # GITHUB_TOKEN: only PAPERCLIP_GITHUB_TOKEN, set on purpose, reaches it. Logins
   # made inside (`docker compose exec paperclip claude`) persist in its home
-  # volume, which home-init resets the same way as the harnesses'.
+  # volume, which home-init prunes and sanitizes at each start. That volume is
+  # per workspace (paperclip-home-<AGENTS_WORKSPACE_KEY>), so memory or skills
+  # one repo's agents leave there are not loaded in another's; log in once per
+  # workspace.
   paperclip:
     image: willfarrell/paperclip
-    read_only: true
+    <<: *hardened
     tmpfs:
-      - /tmp:exec
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
+      - /tmp:exec,nosuid,nodev
     depends_on:
       paperclip-db:
         condition: service_healthy
     ports:
       - "127.0.0.1:${PAPERCLIP_PORT:-3100}:3100"
     environment:
-      # local_trusted (default): no login, for anyone who can reach the port,
-      # including every harness container on this network. authenticated: login.
-      PAPERCLIP_DEPLOYMENT_MODE: ${PAPERCLIP_DEPLOYMENT_MODE:-local_trusted}
+      # authenticated (default): login. local_trusted: no login, admin for
+      # anything that reaches the port, and on Docker Desktop that is every
+      # container, harnesses included, through host.docker.internal.
+      PAPERCLIP_DEPLOYMENT_MODE: ${PAPERCLIP_DEPLOYMENT_MODE:-authenticated}
       DATABASE_URL: postgres://paperclip@paperclip-db:5432/paperclip
       PAPERCLIP_PUBLIC_URL: http://localhost:${PAPERCLIP_PORT:-3100}
       # Hand that URL to the auth library too; left on auto, it derives its
       # origin from each request and warns that redirects may not work.
       PAPERCLIP_AUTH_BASE_URL_MODE: explicit
       ANTHROPIC_API_KEY:
+      CLAUDE_CODE_OAUTH_TOKEN:
       OPENAI_API_KEY:
-      GITHUB_TOKEN:
+      GITHUB_TOKEN: ${PAPERCLIP_GITHUB_TOKEN:-}
       GEMINI_API_KEY:
       GOOGLE_API_KEY:
     volumes:
       - ${HOME:-${USERPROFILE}}/.agents:/.agents:ro
       - paperclip-home:/home
-      - ${PAPERCLIP_WORKSPACES:-${HOME:-${USERPROFILE}}/Development}:/workspaces
+      - type: bind
+        source: ${AGENTS_WORKSPACE:?start it with the paperclip or t3 launcher}
+        target: ${AGENTS_WORKSPACE_IN:?start it with the paperclip or t3 launcher}
+      - type: bind
+        source: ${AGENTS_WORKSPACE}/.git/hooks
+        target: ${AGENTS_WORKSPACE_IN}/.git/hooks
+        read_only: true
+      - type: bind
+        source: ${AGENTS_WORKSPACE}/.git/config
+        target: ${AGENTS_WORKSPACE_IN}/.git/config
+        read_only: true
+    # Its own network, not the shared one, so harness containers cannot reach
+    # it by name. On Docker Desktop they still reach the published port through
+    # host.docker.internal, which is why the login stays on.
     networks:
-      - default
+      - paperclip
       - paperclip-db
 
   # T3 Code: a web UI that drives the harnesses; the image is herdr plus the t3
@@ -139,46 +218,53 @@ services:
   # link with the container's IP; mint one for the published port instead:
   #   docker compose -f compose.yaml exec t3code t3 auth pairing create --base-url http://localhost:3773
   #
-  # Projects live under /workspaces, the same mount and the same .git/hooks
-  # caveat as paperclip's.
+  # The same single-repo workspace mount as paperclip's, started by the t3
+  # launcher, and like paperclip its own network, with the model daemons, and
+  # its own home volume per workspace. GITHUB_TOKEN only from
+  # T3CODE_GITHUB_TOKEN, set on purpose.
   t3code:
     image: willfarrell/t3code
-    read_only: true
+    <<: *hardened
     tmpfs:
-      - /tmp:exec
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
+      - /tmp:exec,nosuid,nodev
     ports:
       - "127.0.0.1:${T3CODE_PORT:-3773}:3773"
     environment:
       ANTHROPIC_API_KEY:
+      CLAUDE_CODE_OAUTH_TOKEN:
       OPENAI_API_KEY:
-      GITHUB_TOKEN:
+      GITHUB_TOKEN: ${T3CODE_GITHUB_TOKEN:-}
       GEMINI_API_KEY:
       GOOGLE_API_KEY:
     volumes:
       - ${HOME:-${USERPROFILE}}/.agents:/.agents:ro
       - t3code-home:/home
-      - ${T3CODE_WORKSPACES:-${HOME:-${USERPROFILE}}/Development}:/workspaces
+      - type: bind
+        source: ${AGENTS_WORKSPACE:?start it with the paperclip or t3 launcher}
+        target: ${AGENTS_WORKSPACE_IN:?start it with the paperclip or t3 launcher}
+      - type: bind
+        source: ${AGENTS_WORKSPACE}/.git/hooks
+        target: ${AGENTS_WORKSPACE_IN}/.git/hooks
+        read_only: true
+      - type: bind
+        source: ${AGENTS_WORKSPACE}/.git/config
+        target: ${AGENTS_WORKSPACE_IN}/.git/config
+        read_only: true
+    networks:
+      - t3code
 
   # Paperclip's own database. Its embedded Postgres ships glibc binaries only,
   # which do not run on the musl images. On an internal network only paperclip
-  # joins, so harness containers on the default network cannot reach it, which
+  # joins, so nothing else can reach it, not even the local systems, which
   # is why trust auth is enough: a password would sit in paperclip's
   # environment, readable by the same agents anyway.
   paperclip-db:
     image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    <<: *hardened
     user: "70:70"
-    read_only: true
     tmpfs:
-      - /tmp
-      - /var/run/postgresql:uid=70,gid=70
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
+      - /tmp:nosuid,nodev
+      - /var/run/postgresql:uid=70,gid=70,nosuid,nodev
     environment:
       POSTGRES_USER: paperclip
       POSTGRES_DB: paperclip
@@ -196,11 +282,18 @@ services:
 networks:
   default:
     name: local-agent-isolation
+  # Not internal: paperclip and t3code publish a port and their agents call
+  # model APIs; local-system-2-pull downloads.
+  paperclip:
+  t3code:
+  local-system-2-pull:
   paperclip-db:
     internal: true
 
 volumes:
   local-system-2-home:
   paperclip-home:
+    name: paperclip-home-${AGENTS_WORKSPACE_KEY:?start it with the paperclip or t3 launcher}
   paperclip-db:
   t3code-home:
+    name: t3code-home-${AGENTS_WORKSPACE_KEY:?start it with the paperclip or t3 launcher}

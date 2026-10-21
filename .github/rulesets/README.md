@@ -8,6 +8,7 @@ The first time:
 ```bash
 gh api -X POST repos/willfarrell/local-agent-isolation/rulesets --input .github/rulesets/main.json
 gh api -X POST repos/willfarrell/local-agent-isolation/rulesets --input .github/rulesets/develop.json
+gh api -X POST repos/willfarrell/local-agent-isolation/rulesets --input .github/rulesets/tags.json
 ```
 
 After a change, `PUT` to `rulesets/<id>`. Get the id from
@@ -16,3 +17,6 @@ After a change, `PUT` to `rulesets/<id>`. Get the id from
 `main.json` is the only gate before release. `release.yml` publishes every
 push to `main` without rerunning the checks, so the required checks listed
 here must match the job names in `test-*.yml`.
+
+`tags.json` stops a pushed tag being moved or deleted, so a version tag keeps
+naming the commit that was released. Repository admins can bypass it.

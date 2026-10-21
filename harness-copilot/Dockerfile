@@ -1,30 +1,27 @@
-# syntax=docker/dockerfile:1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32
+# syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 # check=error=true
 
-ARG NODE_IMAGE=node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1
-ARG COPILOT_VERSION=1.0.88
-ARG NPM_BEFORE=2026-09-22T21:00:00Z
-
 # Never $BUILDPLATFORM: the payload is a per-arch, per-libc optionalDependency.
-FROM ${NODE_IMAGE} AS build
-ARG COPILOT_VERSION
-ARG NPM_BEFORE
+FROM node:26-alpine@sha256:6f08a523443ddedf52941874c203475b0ad503e859ad70cb26ab8be9a517dbd5 AS build
 SHELL ["/bin/ash", "-eu", "-o", "pipefail", "-c"]
+WORKDIR /opt/copilot
+COPY package.json package-lock.json ./
 # @github/copilot ships no lifecycle scripts, so skipping them leaves nothing as a stub.
-RUN npm install -g --ignore-scripts --before="${NPM_BEFORE}" --prefix /opt/copilot @github/copilot@${COPILOT_VERSION}
+RUN npm ci --omit=dev --ignore-scripts
 
 # The SEA can't load its napi addon on musl (upstream bug in 1.0.88) but unpacks its JS first; `test` is the real gate.
-RUN HOME=/tmp /opt/copilot/bin/copilot --version >/dev/null 2>&1 || true; \
-    mv /tmp/.cache/copilot/pkg/*/"${COPILOT_VERSION}" /opt/copilot-app; \
+RUN version=$(node -p 'require("./node_modules/@github/copilot/package.json").version'); \
+    HOME=/tmp /opt/copilot/node_modules/.bin/copilot --version >/dev/null 2>&1 || true; \
+    mv /tmp/.cache/copilot/pkg/*/"${version}" /opt/copilot-app; \
     test -f /opt/copilot-app/index.js
 
 # Placeholder for docker-build.hcl's named context (tools/Dockerfile); a bare `docker build` fails here by design.
 FROM scratch AS tools
 
 FROM tools AS runtime
-USER root
+USER 0:0
 
-COPY --from=build /opt/copilot-app /opt/copilot
+COPY --from=build --chown=root:root /opt/copilot-app /opt/copilot
 
 # Replaces the published `copilot` bin, which is the broken SEA.
 COPY --chmod=0755 <<'EOF' /usr/local/bin/copilot
@@ -32,9 +29,24 @@ COPY --chmod=0755 <<'EOF' /usr/local/bin/copilot
 exec node /opt/copilot/index.js "$@"
 EOF
 
-RUN { find / -xdev -perm /6000 -type f -exec chmod a-s {} + 2>/dev/null || true; }
+COPY <<'EOF' /etc/agents/links.d/harness-copilot
+/.agents/INSTRUCTIONS.md=.copilot/copilot-instructions.md
+/.agents/settings.copilot.json=.copilot/mcp-config.json
+EOF
 
-ENV AGENTS_LINKS="${AGENTS_LINKS} /.agents/INSTRUCTIONS.md=.copilot/copilot-instructions.md /.agents/settings.copilot.json=.copilot/mcp-config.json"
+# With no system keychain the login token is stored in config.json. Kept whole: its login fields are unverified
+# (the SEA's JS is packed), so it also carries settings such as trusted folders from run to run.
+COPY <<'EOF' /etc/agents/logins.d/harness-copilot
+.copilot/config.json
+EOF
+
+COPY <<'EOF' /etc/agents/keep.d/harness-copilot
+.copilot/session-state/
+EOF
+
+# Last root step: no setuid/setgid files, and nothing world-writable but /tmp (a tmpfs at runtime).
+RUN { find / -xdev -perm /6000 -type f -exec chmod a-s {} + 2>/dev/null || true; } \
+ && { find / -xdev -perm -0002 ! -type l ! -path /tmp -exec chmod o-w {} + 2>/dev/null || true; }
 
 USER 1000:1000
 ENTRYPOINT ["/sbin/tini", "--", "home-init", "copilot"]

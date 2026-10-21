@@ -1,17 +1,19 @@
-# syntax=docker/dockerfile:1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32
+# syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 # check=error=true
 
-ARG HERMES_VERSION=v2026.9.21
-ARG HERMES_COMMIT=d337b736aa1e8ebecfab043842d13e4a2d2f48a3
-# Hermes needs Python < 3.14 and alpine ships 3.14, so uv supplies a checksummed musl 3.13.
-ARG PYTHON_VERSION=3.13
+ARG HERMES_VERSION=v0.22.2
+ARG HERMES_COMMIT=d923a5eb487a17c0a68801bba9ef0f56c81040a8
+# Hermes 0.22+ runs on Python 3.14 only (its lock covers nothing older); uv supplies a checksummed musl build.
+ARG PYTHON_VERSION=3.14
 
 # Placeholder for docker-build.hcl's named context (tools/Dockerfile); a bare `docker build` fails here by design.
 FROM scratch AS tools
 
 # Never $BUILDPLATFORM: uv resolves arch/libc-specific Python and wheels; paths are absolute, so build in place.
+# Root for the whole stage: it installs into /opt and is never shipped; the runtime ends as uid 1000.
 FROM tools AS build
-USER root
+# hadolint ignore=DL3002
+USER 0:0
 ARG HERMES_VERSION
 ARG HERMES_COMMIT
 ARG PYTHON_VERSION
@@ -39,18 +41,32 @@ db.execute(\"INSERT INTO d VALUES ('hermes')\"); \
 sys.exit('SQLite FTS5 trigram self-test failed') if db.execute(\"SELECT count(*) FROM d WHERE d MATCH 'erm'\").fetchone()[0] != 1 else None"
 
 FROM tools AS runtime
-USER root
+USER 0:0
 
 COPY --from=build --chown=root:root /opt/hermes /opt/hermes
 
 # Link only the entry points: the venv's bin on PATH would put its python in front of everything the agent runs.
 RUN ln -s /opt/hermes/venv/bin/hermes /usr/local/bin/hermes \
- && ln -s /opt/hermes/venv/bin/hermes-acp /usr/local/bin/hermes-acp \
- && { find / -xdev -perm /6000 -type f -exec chmod a-s {} + 2>/dev/null || true; }
+ && ln -s /opt/hermes/venv/bin/hermes-acp /usr/local/bin/hermes-acp
 
-# ~/.hermes/skills is left alone: skills Hermes writes from experience are the point of it.
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    AGENTS_LINKS="${AGENTS_LINKS} /.agents/settings.hermes.yaml=.hermes/config.yaml"
+COPY <<'EOF' /etc/agents/links.d/harness-hermes
+/.agents/settings.hermes.yaml=.hermes/config.yaml
+EOF
+
+# The login and session database, plus the memories and skills Hermes writes from experience: they are the point of
+# it. A skill can carry a script, so one repo's run can leave code a later run in another repo loads.
+COPY <<'EOF' /etc/agents/logins.d/harness-hermes
+.hermes/auth.json
+.hermes/state.db*
+.hermes/memories
+.hermes/skills
+EOF
+
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# Last root step: no setuid/setgid files, and nothing world-writable but /tmp (a tmpfs at runtime).
+RUN { find / -xdev -perm /6000 -type f -exec chmod a-s {} + 2>/dev/null || true; } \
+ && { find / -xdev -perm -0002 ! -type l ! -path /tmp -exec chmod o-w {} + 2>/dev/null || true; }
 
 USER 1000:1000
 ENTRYPOINT ["/sbin/tini", "--", "home-init", "hermes"]

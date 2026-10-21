@@ -1,30 +1,46 @@
-# syntax=docker/dockerfile:1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32
+# syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 # check=error=true
 
-ARG NODE_IMAGE=node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1
-ARG GEMINI_VERSION=0.60.0
-ARG NPM_BEFORE=2026-09-22T21:00:00Z
-
-FROM ${NODE_IMAGE} AS build
-ARG GEMINI_VERSION
-ARG NPM_BEFORE
+FROM node:26-alpine@sha256:6f08a523443ddedf52941874c203475b0ad503e859ad70cb26ab8be9a517dbd5 AS build
+WORKDIR /opt/gemini
+COPY package.json package-lock.json ./
 # @google/gemini-cli ships no lifecycle scripts, so skipping them leaves nothing as a stub.
-RUN npm install -g --ignore-scripts --before="${NPM_BEFORE}" --prefix /opt/gemini @google/gemini-cli@${GEMINI_VERSION}
+RUN npm ci --omit=dev --ignore-scripts
 
 # Placeholder for docker-build.hcl's named context (tools/Dockerfile); a bare `docker build` fails here by design.
 FROM scratch AS tools
 
 FROM tools AS runtime
-USER root
+USER 0:0
 
-COPY --from=build /opt/gemini /opt/gemini
+COPY --from=build --chown=root:root /opt/gemini /opt/gemini
+RUN ln -s /opt/gemini/node_modules/.bin/gemini /usr/local/bin/gemini
 
-RUN { find / -xdev -perm /6000 -type f -exec chmod a-s {} + 2>/dev/null || true; }
+COPY <<'EOF' /etc/agents/links.d/harness-gemini
+/.agents/INSTRUCTIONS.md=.gemini/GEMINI.md
+/.agents/settings.gemini.json=.gemini/settings.json
+EOF
+
+# Google login, the file-backed keychain used when no system one exists, and MCP server logins. Not projects.json:
+# with it empty each run, Gemini's tmp/<slug> is the one the launchers compute and mount.
+COPY <<'EOF' /etc/agents/logins.d/harness-gemini
+.gemini/oauth_creds.json
+.gemini/google_accounts.json
+.gemini/gemini-credentials.json
+.gemini/mcp-oauth-tokens.json
+EOF
+
+# The folder the launchers mount each session into (kept, emptied).
+COPY <<'EOF' /etc/agents/keep.d/harness-gemini
+.gemini/tmp/
+EOF
 
 # TRUST_WORKSPACE: an untrusted folder disables every MCP server; the container is the boundary.
-ENV PATH=/opt/gemini/bin:$PATH \
-    GEMINI_CLI_TRUST_WORKSPACE=true \
-    AGENTS_LINKS="${AGENTS_LINKS} /.agents/INSTRUCTIONS.md=.gemini/GEMINI.md /.agents/settings.gemini.json=.gemini/settings.json"
+ENV GEMINI_CLI_TRUST_WORKSPACE=true
+
+# Last root step: no setuid/setgid files, and nothing world-writable but /tmp (a tmpfs at runtime).
+RUN { find / -xdev -perm /6000 -type f -exec chmod a-s {} + 2>/dev/null || true; } \
+ && { find / -xdev -perm -0002 ! -type l ! -path /tmp -exec chmod o-w {} + 2>/dev/null || true; }
 
 USER 1000:1000
 ENTRYPOINT ["/sbin/tini", "--", "home-init", "gemini"]

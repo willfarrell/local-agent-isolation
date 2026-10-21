@@ -1,33 +1,53 @@
-# syntax=docker/dockerfile:1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32
+# syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 # check=error=true
 
-ARG NODE_IMAGE=node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1
-ARG PI_VERSION=0.73.1
-ARG NPM_BEFORE=2026-09-22T21:00:00Z
-
-# Never $BUILDPLATFORM: @mariozechner/clipboard is a per-arch, per-libc optionalDependency.
-FROM ${NODE_IMAGE} AS build
-ARG PI_VERSION
-ARG NPM_BEFORE
-# Keep only this platform's koffi prebuild (~25MB of 18); the test fails if koffi renames its dirs.
-RUN npm install -g --ignore-scripts --before="${NPM_BEFORE}" --prefix /opt/pi @mariozechner/pi-coding-agent@${PI_VERSION} \
- && koffi=/opt/pi/lib/node_modules/@mariozechner/pi-coding-agent/node_modules/koffi/build/koffi \
- && keep="musl_$(node -p process.arch)" \
- && test -d "$koffi/$keep" \
- && find "$koffi" -mindepth 1 -maxdepth 1 ! -name "$keep" -exec rm -rf {} +
+FROM node:26-alpine@sha256:6f08a523443ddedf52941874c203475b0ad503e859ad70cb26ab8be9a517dbd5 AS build
+WORKDIR /opt/pi
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts
 
 # Placeholder for docker-build.hcl's named context (tools/Dockerfile); a bare `docker build` fails here by design.
 FROM scratch AS tools
 
 FROM tools AS runtime
-USER root
+USER 0:0
 
 COPY --from=build --chown=root:root /opt/pi /opt/pi
 
-RUN { find / -xdev -perm /6000 -type f -exec chmod a-s {} + 2>/dev/null || true; }
+# pi runs any value in auth.json that starts with "!" as a shell command. agents-logins-save strips that; this
+# also covers an orchestrator's kept home. Fails closed: not a file, or anything jq cannot clear, refuses.
+COPY --chmod=0755 <<'EOF' /usr/local/bin/pi
+#!/bin/sh
+auth=$HOME/.pi/agent/auth.json
+if { [ -e "$auth" ] || [ -L "$auth" ]; } && ! { [ -f "$auth" ] && [ ! -L "$auth" ] \
+    && jq -e 'all(..; type != "string" or (startswith("!") | not))' "$auth" >/dev/null 2>&1; }; then
+  echo "pi: $auth is not a plain file or holds a shell command (a value starting with !); delete it and log in again" >&2
+  exit 1
+fi
+exec /opt/pi/node_modules/.bin/pi "$@"
+EOF
 
-ENV PATH=/opt/pi/bin:$PATH \
-    AGENTS_LINKS="${AGENTS_LINKS} /.agents/INSTRUCTIONS.md=.pi/agent/AGENTS.md /.agents/settings.pi.json=.pi/agent/settings.json"
+COPY <<'EOF' /etc/agents/links.d/harness-pi-mono
+/.agents/INSTRUCTIONS.md=.pi/agent/AGENTS.md
+/.agents/settings.pi.json=.pi/agent/settings.json
+EOF
+
+# Not models.json: an apiKey there can be a shell command pi runs.
+COPY <<'EOF' /etc/agents/logins.d/harness-pi-mono
+.pi/agent/auth.json
+EOF
+
+# sessions/ holds the launchers' mounts (kept, emptied).
+COPY <<'EOF' /etc/agents/keep.d/harness-pi-mono
+.pi/agent/sessions/
+EOF
+
+# Install and update telemetry, on by default.
+ENV PI_TELEMETRY=0
+
+# Last root step: no setuid/setgid files, and nothing world-writable but /tmp (a tmpfs at runtime).
+RUN { find / -xdev -perm /6000 -type f -exec chmod a-s {} + 2>/dev/null || true; } \
+ && { find / -xdev -perm -0002 ! -type l ! -path /tmp -exec chmod o-w {} + 2>/dev/null || true; }
 
 USER 1000:1000
-ENTRYPOINT ["/sbin/tini", "--", "home-init", "/opt/pi/bin/pi"]
+ENTRYPOINT ["/sbin/tini", "--", "home-init", "pi"]

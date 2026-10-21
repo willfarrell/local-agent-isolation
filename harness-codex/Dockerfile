@@ -1,28 +1,37 @@
-# syntax=docker/dockerfile:1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32
+# syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 # check=error=true
 
-ARG NODE_IMAGE=node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1
-ARG CODEX_VERSION=0.156.0
-ARG NPM_BEFORE=2026-09-22T21:00:00Z
-
-FROM ${NODE_IMAGE} AS build
-ARG CODEX_VERSION
-ARG NPM_BEFORE
+FROM node:26-alpine@sha256:6f08a523443ddedf52941874c203475b0ad503e859ad70cb26ab8be9a517dbd5 AS build
+WORKDIR /opt/codex
+COPY package.json package-lock.json ./
 # @openai/codex ships no lifecycle scripts, so skipping them leaves nothing as a stub.
-RUN npm install -g --ignore-scripts --before="${NPM_BEFORE}" --prefix /opt/codex @openai/codex@${CODEX_VERSION}
+RUN npm ci --omit=dev --ignore-scripts
 
 # Placeholder for docker-build.hcl's named context (tools/Dockerfile); a bare `docker build` fails here by design.
 FROM scratch AS tools
 
 FROM tools AS runtime
-USER root
+USER 0:0
 
-COPY --from=build /opt/codex /opt/codex
+COPY --from=build --chown=root:root /opt/codex /opt/codex
+RUN ln -s /opt/codex/node_modules/.bin/codex /usr/local/bin/codex
 
-RUN { find / -xdev -perm /6000 -type f -exec chmod a-s {} + 2>/dev/null || true; }
+COPY <<'EOF' /etc/agents/links.d/harness-codex
+/.agents/INSTRUCTIONS.md=.codex/AGENTS.md
+/.agents/settings.codex.toml=.codex/config.toml
+EOF
 
-ENV PATH=/opt/codex/bin:$PATH \
-    AGENTS_LINKS="${AGENTS_LINKS} /.agents/INSTRUCTIONS.md=.codex/AGENTS.md /.agents/settings.codex.toml=.codex/config.toml"
+COPY <<'EOF' /etc/agents/logins.d/harness-codex
+.codex/auth.json
+EOF
+
+COPY <<'EOF' /etc/agents/keep.d/harness-codex
+.codex/sessions/
+EOF
+
+# Last root step: no setuid/setgid files, and nothing world-writable but /tmp (a tmpfs at runtime).
+RUN { find / -xdev -perm /6000 -type f -exec chmod a-s {} + 2>/dev/null || true; } \
+ && { find / -xdev -perm -0002 ! -type l ! -path /tmp -exec chmod o-w {} + 2>/dev/null || true; }
 
 USER 1000:1000
 # bwrap can't run unprivileged, so settings.codex.toml uses danger-full-access; the container is the sandbox.

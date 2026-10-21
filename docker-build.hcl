@@ -66,109 +66,58 @@ function "ctx" {
   result = CONTEXTS == "image" ? "docker-image://willfarrell/${name}:${TAG}" : "target:${name}"
 }
 
-# Base images: full reference including digest, so overriding these actually
-# works. A digest on the FROM line instead would win over the ARG and make the
-# knob silently inert. A base bump changes libc, the CA bundle and every package
-# version at once, so it is a deliberate edit, not a drift.
+# Installed versions are not set here. npm packages are pinned in each image's
+# package.json and package-lock.json, Azure CLI in tools/az/uv.lock, and base
+# images as literal references on the Dockerfiles' FROM lines: Dependabot reads
+# those, but not this file and not `FROM ${ARG}`, which is why the bases are no
+# longer ARGs. What Dependabot cannot bump stays a Dockerfile `ARG X=...`
+# default, and that default is the only copy: override one for a build with
+#   --set harness-hermes.args.HERMES_VERSION=v0.23.0
 #
-# It is also not a one-variable change: every Dockerfile pins its apk packages
-# to revisions that exist only in this exact base (hadolint DL3018), and alpine
-# keeps one revision per branch. A new digest invalidates every pin at once and
-# the build fails with "package not found", never naming the digest as the
-# cause. Re-read values with `apk policy <pkg>` in the new base, per image:
-# local-system-2 pins ollama through OLLAMA_VERSION below, and herdr needs
-# openssh-client-default, which `apk policy openssh-client` never reveals
-# because that name is a virtual provider.
+# A base bump invalidates every apk pin at once: each Dockerfile pins its apk
+# packages to revisions that exist only in that base (hadolint DL3018), and
+# alpine keeps one revision per branch, so the build fails with "package not
+# found", never naming the digest as the cause. Re-read values with
+# `apk policy <pkg>` in the new base, per image: local-system-2 pins ollama
+# through OLLAMA_VERSION, and herdr needs openssh-client-default, which
+# `apk policy openssh-client` never reveals because that name is a virtual
+# provider. So a Dependabot alpine or node PR builds only once its pins are redone.
 #
 # `unable to select packages ... exit code: 4` is usually a transient index
 # fetch, not a bad pin: retry once before re-reading versions. A preceding
 # `DNS: transient error` or `fetching .../APKINDEX.tar.gz` warning is what
 # distinguishes a network blip from a revision that genuinely vanished — the
 # error itself names neither the package nor the cause.
-variable "ALPINE_IMAGE" {
-  default = "alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6"
+
+# The image lists. The default group, the release matrix and herdr's contexts
+# all derive from these, so another image is a target block plus one entry here
+# (and, for a harness, AGENTS_HARNESSES in both launchers).
+variable "HARNESSES" {
+  default = ["harness-claude-code", "harness-codex", "harness-copilot", "harness-gemini", "harness-hermes", "harness-kiro", "harness-opencode", "harness-pi-mono"]
 }
 
-variable "NODE_IMAGE" {
-  default = "node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1"
+variable "ORCHESTRATORS" {
+  default = ["herdr", "paperclip", "t3code"]
 }
 
-# Installed versions. Pinned rather than `latest`: these images are the ones
-# you debug six months from now, and a `latest` build is not reproducible.
-variable "CLAUDE_CODE_VERSION" {
-  default = "2.1.280"
+variable "LOCAL_SYSTEMS" {
+  default = ["local-system-1", "local-system-2"]
 }
 
-variable "CODEX_VERSION" {
-  default = "0.156.0"
+# Built locally only, never released and never shipped inside an orchestrator.
+# Kiro is AWS Content, and its license (AWS IP License s.4) bars distributing it.
+# Its tag is local/, not willfarrell/, so a bare `bake --push` cannot publish it.
+variable "LOCAL_ONLY" {
+  default = ["harness-kiro"]
 }
 
-variable "COPILOT_VERSION" {
-  default = "1.0.88"
-}
-
-variable "GEMINI_VERSION" {
-  default = "0.60.0"
-}
-
-variable "OPENCODE_VERSION" {
-  default = "1.18.32"
-}
-
-variable "PI_VERSION" {
-  default = "0.73.1"
-}
-
-# npm installs only versions published before this, which freezes the
-# dependencies under each pinned package too (npm has no lockfile for a global
-# install). Must be later than the newest pinned version's publish time, so a
-# version bump usually bumps this as well: `npm view <pkg> time --json`.
-variable "NPM_BEFORE" {
-  default = "2026-09-22T21:00:00Z"
-}
-
-# MCP server every harness names in its settings.*; built into tools.
-variable "CONTEXT_MODE_VERSION" {
-  default = "1.0.169"
-}
-
-# Hermes is built from its Git tag (upstream left PyPI); the commit is checked
-# as well, since a tag can move. Bump both together:
-#   git ls-remote https://github.com/NousResearch/hermes-agent.git 'refs/tags/<tag>^{}'
-variable "HERMES_VERSION" {
-  default = "v2026.9.21"
-}
-
-variable "HERMES_COMMIT" {
-  default = "d337b736aa1e8ebecfab043842d13e4a2d2f48a3"
-}
-
-variable "PAPERCLIP_VERSION" {
-  default = "2026.916.1"
-}
-
-variable "HERDR_VERSION" {
-  default = "0.9.1"
-}
-
-# T3 Code is built from its Git tag (the published `t3` is a glibc binary); the
-# commit is checked as well, as with Hermes. Bump both together:
-#   git ls-remote https://github.com/pingdotgg/t3code.git 'refs/tags/<tag>'
-variable "T3CODE_VERSION" {
-  default = "v0.0.45"
-}
-
-variable "T3CODE_COMMIT" {
-  default = "6c8fed35dded9ff71c5b46807125457acbb76be6"
-}
-
-# Alpine community package revision, so it moves with ALPINE_IMAGE.
-variable "OLLAMA_VERSION" {
-  default = "0.17.7-r1"
+function "shipped" {
+  params = [names]
+  result = [for n in names : n if !contains(LOCAL_ONLY, n)]
 }
 
 group "default" {
-  targets = ["tools", "harness-claude-code", "harness-codex", "harness-copilot", "harness-gemini", "harness-hermes", "harness-opencode", "harness-pi-mono", "herdr", "paperclip", "t3code", "local-system-1", "local-system-2"]
+  targets = concat(["tools"], HARNESSES, ORCHESTRATORS, LOCAL_SYSTEMS)
 }
 
 target "_common" {
@@ -177,26 +126,6 @@ target "_common" {
     GIT_SHA != "" ? { "org.opencontainers.image.revision" = GIT_SHA } : {}
   )
   args = SOURCE_DATE_EPOCH != "" ? { SOURCE_DATE_EPOCH = SOURCE_DATE_EPOCH } : {}
-}
-
-# Only the images that still name alpine directly take ALPINE_IMAGE: tools, the
-# herdr download stage, local-system-1 and local-system-2. Harness runtimes
-# start FROM tools instead, so passing it to them would warn about an unconsumed
-# build arg.
-target "_alpine" {
-  args = {
-    ALPINE_IMAGE = ALPINE_IMAGE
-  }
-}
-
-# Only the images with a node build stage take NODE_IMAGE (tools, for the MCP
-# servers, and the npm-installed harnesses); passing it to the others would
-# warn about an unconsumed build arg.
-target "_node" {
-  args = {
-    NODE_IMAGE = NODE_IMAGE
-    NPM_BEFORE = NPM_BEFORE
-  }
 }
 
 # Every harness runtime starts FROM this, so the shared packages and setup live
@@ -219,111 +148,84 @@ target "_release" {
   output = ["type=registry,rewrite-timestamp=true"]
 }
 
+# One block per harness, all alike: what differs lives in each Dockerfile.
 target "harness-claude-code" {
-  inherits = ["_common", "_node", "_tools"]
+  inherits = ["_common", "_tools"]
   context  = "harness-claude-code"
   tags     = ["willfarrell/harness-claude-code:${TAG}"]
-  args = {
-    CLAUDE_CODE_VERSION = CLAUDE_CODE_VERSION
-  }
 }
 
 target "harness-codex" {
-  inherits = ["_common", "_node", "_tools"]
+  inherits = ["_common", "_tools"]
   context  = "harness-codex"
   tags     = ["willfarrell/harness-codex:${TAG}"]
-  args = {
-    CODEX_VERSION = CODEX_VERSION
-  }
 }
 
 target "harness-copilot" {
-  inherits = ["_common", "_node", "_tools"]
+  inherits = ["_common", "_tools"]
   context  = "harness-copilot"
   tags     = ["willfarrell/harness-copilot:${TAG}"]
-  args = {
-    COPILOT_VERSION = COPILOT_VERSION
-  }
 }
 
 target "harness-gemini" {
-  inherits = ["_common", "_node", "_tools"]
+  inherits = ["_common", "_tools"]
   context  = "harness-gemini"
   tags     = ["willfarrell/harness-gemini:${TAG}"]
-  args = {
-    GEMINI_VERSION = GEMINI_VERSION
-  }
 }
 
-# Python, not npm, so no _node: its build stage starts from tools.
 target "harness-hermes" {
   inherits = ["_common", "_tools"]
   context  = "harness-hermes"
   tags     = ["willfarrell/harness-hermes:${TAG}"]
-  args = {
-    HERMES_VERSION = HERMES_VERSION
-    HERMES_COMMIT  = HERMES_COMMIT
-  }
+}
+
+target "harness-kiro" {
+  inherits = ["_common", "_tools"]
+  context  = "harness-kiro"
+  tags     = ["local/harness-kiro:${TAG}"]
 }
 
 target "harness-opencode" {
-  inherits = ["_common", "_node", "_tools"]
+  inherits = ["_common", "_tools"]
   context  = "harness-opencode"
   tags     = ["willfarrell/harness-opencode:${TAG}"]
-  args = {
-    OPENCODE_VERSION = OPENCODE_VERSION
-  }
 }
 
 target "harness-pi-mono" {
-  inherits = ["_common", "_node", "_tools"]
+  inherits = ["_common", "_tools"]
   context  = "harness-pi-mono"
   tags     = ["willfarrell/harness-pi-mono:${TAG}"]
-  args = {
-    PI_VERSION = PI_VERSION
-  }
 }
 
 # herdr hosts the harnesses in its panes, so it ships them: the artifacts come
 # from the sibling targets rather than reinstalling, so versions and pins stay
 # in one place. Costs size: this image is the sum of all seven plus herdr.
 target "herdr" {
-  inherits = ["_common", "_alpine"]
+  inherits = ["_common"]
   context  = "herdr"
   tags     = ["willfarrell/herdr:${TAG}"]
   # Override the Dockerfile's `FROM scratch AS <name>` placeholders. They exist
   # so hadolint DL3022 passes without an ignore, NOT to make a bare
   # `docker build` work; that still fails, at the COPY, which is what stops a
-  # harness-less herdr being built by accident. Spelled out rather than
+  # harness-less herdr being built by accident. Built here rather than
   # inherited from _tools: one contexts map per target, a second would replace
-  # this one rather than merge into it.
-  contexts = {
-    harness-claude-code = ctx("harness-claude-code")
-    harness-codex       = ctx("harness-codex")
-    harness-copilot     = ctx("harness-copilot")
-    harness-gemini      = ctx("harness-gemini")
-    harness-hermes      = ctx("harness-hermes")
-    harness-opencode    = ctx("harness-opencode")
-    harness-pi-mono     = ctx("harness-pi-mono")
-    tools               = ctx("tools")
-  }
-  args = {
-    HERDR_VERSION = HERDR_VERSION
-  }
+  # this one rather than merge into it. A harness added to HARNESSES still needs
+  # its placeholder and three COPY lines in herdr/Dockerfile.
+  contexts = merge(
+    { for h in shipped(HARNESSES) : h => ctx(h) },
+    { tools = ctx("tools") }
+  )
 }
 
 # paperclip orchestrates the harnesses as agents, so it is built on herdr,
 # which already carries all seven. A shared service in compose.yaml, not a
 # per-repo harness.
 target "paperclip" {
-  inherits = ["_common", "_node"]
+  inherits = ["_common"]
   context  = "paperclip"
   tags     = ["willfarrell/paperclip:${TAG}"]
   contexts = {
     herdr = ctx("herdr")
-  }
-  args = {
-    PAPERCLIP_VERSION = PAPERCLIP_VERSION
   }
 }
 
@@ -336,51 +238,36 @@ target "t3code" {
   contexts = {
     herdr = ctx("herdr")
   }
-  # NODE_IMAGE without _node's NPM_BEFORE: pnpm installs from upstream's lockfile.
-  args = {
-    NODE_IMAGE     = NODE_IMAGE
-    T3CODE_VERSION = T3CODE_VERSION
-    T3CODE_COMMIT  = T3CODE_COMMIT
-  }
 }
 
 # The base every harness runtime is built on; see tools/Dockerfile.
 target "tools" {
-  inherits = ["_common", "_alpine", "_node"]
+  inherits = ["_common"]
   context  = "tools"
   tags     = ["willfarrell/tools:${TAG}"]
-  args = {
-    CONTEXT_MODE_VERSION = CONTEXT_MODE_VERSION
-  }
 }
 
 # Its one pip dependency is pinned by hash in local-system-1/requirements.txt
-# and the Julia-1 weights by revision in julia.py, so it takes no version variable.
+# and the Julia-1 weights by revision in julia.py.
 target "local-system-1" {
-  inherits = ["_common", "_alpine"]
+  inherits = ["_common"]
   context  = "local-system-1"
   tags     = ["willfarrell/local-system-1:${TAG}"]
 }
 
 target "local-system-2" {
-  inherits = ["_common", "_alpine"]
+  inherits = ["_common"]
   context  = "local-system-2"
   tags     = ["willfarrell/local-system-2:${TAG}"]
-  args = {
-    OLLAMA_VERSION = OLLAMA_VERSION
-  }
 }
 
-# Release tier of every target: `bake release` builds all of them, each tagged
-# for the registry as TAG and, when GIT_SHA is set, as the short commit too, so
-# a moving `latest` always has an immutable tag beside it to pin or roll back to.
-#
-# Another image: add its version variable and target block, then its name to
-# this list and the default group (and, for a harness, AGENTS_HARNESSES in both
-# launchers).
+# Release tier of every target but LOCAL_ONLY: `bake release` builds all of
+# them, each tagged for the registry as TAG and, when GIT_SHA is set, as the
+# short commit too, so a moving `latest` always has an immutable tag beside it
+# to pin or roll back to.
 target "release" {
   name     = "${tgt}-release"
-  matrix   = { tgt = ["tools", "harness-claude-code", "harness-codex", "harness-copilot", "harness-gemini", "harness-hermes", "harness-opencode", "harness-pi-mono", "herdr", "paperclip", "t3code", "local-system-1", "local-system-2"] }
+  matrix   = { tgt = shipped(concat(["tools"], HARNESSES, ORCHESTRATORS, LOCAL_SYSTEMS)) }
   inherits = [tgt, "_release"]
   tags = concat(
     ["${REGISTRY}/${tgt}:${TAG}"],

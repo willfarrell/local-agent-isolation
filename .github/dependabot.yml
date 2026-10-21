@@ -1,20 +1,101 @@
 version: 2
+
+# Monthly, grouped, and only versions out for at least a week: a hijacked
+# release is usually caught and pulled within days. What Dependabot cannot
+# read (git tag + commit pairs, release-binary shas, apk revisions) stays a
+# Dockerfile ARG default and is bumped by hand, see CONTRIBUTING.md.
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    cooldown:
+      default-days: 7
     groups:
       actions:
         patterns: ["*"]
 
-  # The CI tool pins (semgrep, ZAP). The image Dockerfiles take their bases
-  # from docker-build.hcl variables, which Dependabot cannot read; those are
-  # bumped by hand, see CONTRIBUTING.md.
+  # One package.json + package-lock.json per npm-installed harness.
+  - package-ecosystem: npm
+    directories:
+      - /harness-claude-code
+      - /harness-codex
+      - /harness-copilot
+      - /harness-gemini
+      - /harness-opencode
+      - /harness-pi-mono
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      harnesses:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: /paperclip
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      orchestrators:
+        patterns: ["*"]
+
+  # The tools image: the context-mode MCP server and Azure CLI.
+  - package-ecosystem: npm
+    directory: /tools/mcp
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      tools:
+        patterns: ["*"]
+
+  - package-ecosystem: uv
+    directory: /tools/az
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      tools:
+        patterns: ["*"]
+
+  # alpine and node on the FROM lines. A PR whose base moved an apk package
+  # fails to build until the pins are re-read in it (docker-build.hcl says how).
+  - package-ecosystem: docker
+    directories:
+      - /tools
+      - /harness-claude-code
+      - /harness-codex
+      - /harness-copilot
+      - /harness-gemini
+      - /harness-hermes
+      - /harness-kiro
+      - /harness-opencode
+      - /harness-pi-mono
+      - /herdr
+      - /paperclip
+      - /t3code
+      - /local-system-1
+      - /local-system-2
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      base-images:
+        patterns: ["*"]
+
+  # The CI tool pins (semgrep, ZAP).
   - package-ecosystem: docker
     directories: ["/.github/semgrep", "/.github/zap"]
     schedule:
-      interval: weekly
+      interval: monthly
+    cooldown:
+      default-days: 7
     groups:
       ci-tools:
         patterns: ["*"]
@@ -23,4 +104,6 @@ updates:
   - package-ecosystem: docker-compose
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    cooldown:
+      default-days: 7
