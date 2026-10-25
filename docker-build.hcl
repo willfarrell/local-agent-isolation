@@ -139,13 +139,20 @@ target "_tools" {
 # Release tier: both arches, SBOM and provenance as the audit trail, timestamps
 # rewritten for reproducibility, pushed. Use `attest`, not the sbom/provenance
 # shorthand: buildx parses the shorthand but silently drops it from the plan.
+#
+# Layers ship as zstd level 3, not BuildKit's default gzip: measured on these
+# images, 6-10% smaller, ~10x faster to compress and ~1.5x faster to
+# decompress on pull. force-compression recompresses the base image's layers
+# too, which otherwise stay gzip. Pulling needs containerd 1.5+ or a current
+# Docker Engine or Desktop. Don't use zstd for an image that Fargate will
+# lazy-load with SOCI: SOCI there accepts only gzip layers.
 target "_release" {
   platforms = ["linux/amd64", "linux/arm64"]
   attest = [
     "type=sbom",
     "type=provenance,mode=max",
   ]
-  output = ["type=registry,rewrite-timestamp=true"]
+  output = ["type=registry,rewrite-timestamp=true,oci-mediatypes=true,compression=zstd,compression-level=3,force-compression=true"]
 }
 
 # One block per harness, all alike: what differs lives in each Dockerfile.

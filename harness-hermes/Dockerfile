@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 # check=error=true
 
-ARG HERMES_VERSION=v0.22.2
-ARG HERMES_COMMIT=d923a5eb487a17c0a68801bba9ef0f56c81040a8
+ARG HERMES_VERSION=v0.22.4
+ARG HERMES_COMMIT=4d04303818b61bf3aa09278af48356315515965b
 # Hermes 0.22+ runs on Python 3.14 only (its lock covers nothing older); uv supplies a checksummed musl build.
 ARG PYTHON_VERSION=3.14
 

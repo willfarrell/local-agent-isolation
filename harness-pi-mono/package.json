@@ -2,6 +2,6 @@
   "name": "harness-pi-mono",
   "private": true,
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "1.2.0"
+    "@earendil-works/pi-coding-agent": "1.4.0"
   }
 }

@@ -2,6 +2,6 @@
   "name": "harness-copilot",
   "private": true,
   "dependencies": {
-    "@github/copilot": "1.0.98"
+    "@github/copilot": "1.0.102"
   }
 }

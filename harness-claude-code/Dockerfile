@@ -2,7 +2,7 @@
 # check=error=true
 
 # Never $BUILDPLATFORM: npm resolves an arch- and libc-specific native binary here.
-FROM node:26-alpine@sha256:6f08a523443ddedf52941874c203475b0ad503e859ad70cb26ab8be9a517dbd5 AS build
+FROM node:26-alpine@sha256:ae8e1c19d56886270987e99b3cfcef13a919f0655b376ae322bc64ada76f88cd AS build
 # pipefail: a failing `od` in `od | tr` is otherwise masked by tr's exit status.
 SHELL ["/bin/ash", "-eu", "-o", "pipefail", "-c"]
 WORKDIR /opt/claude-code

@@ -1,10 +1,10 @@
 # syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 # check=error=true
 
-ARG KIRO_VERSION=2.32.0
+ARG KIRO_VERSION=2.33.1
 
 # Fetches and checksums only, so run it native on the builder; TARGETARCH still picks the asset.
-FROM --platform=$BUILDPLATFORM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 AS build
+FROM --platform=$BUILDPLATFORM alpine:3.24@sha256:c6b073f8e9e58d881f6ffba6ebf3b9ebd60b9e7d6e8337018c0e68bb5c356873 AS build
 ARG KIRO_VERSION
 ARG TARGETARCH
 # -e is what enforces the checksum gate below; pipefail only covers a command appended after the pipe.
@@ -14,8 +14,8 @@ RUN apk add --no-cache \
       wget=1.25.0-r3
 # The -musl build; the plain one is glibc. shas are upstream's, from latest/manifest.json on that bucket.
 RUN case "$TARGETARCH" in \
-      amd64) arch=x86_64;  sha=e9b542eda8aa48d4480817f88e8c045a856e03efac38802d1198afcc1c2a20fa ;; \
-      arm64) arch=aarch64; sha=8af300cd765d1525c91aa52699f3a7998cb84860f74604747650ca9d6427132d ;; \
+      amd64) arch=x86_64;  sha=2cb595f941b19827776318ebc8e698bc6033706c848a3fcb21379bb793e60bf5 ;; \
+      arm64) arch=aarch64; sha=59f0668de8d6303625326764dd624f63472a1f602648c06c657da68a0ea937e9 ;; \
       *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
     wget -qO /kiro.tar.gz "https://desktop-release.q.us-east-1.amazonaws.com/${KIRO_VERSION}/kirocli-${arch}-linux-musl.tar.gz"; \

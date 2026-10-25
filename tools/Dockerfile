@@ -3,14 +3,14 @@
 
 # MCP servers every harness names in its settings.*; --ignore-scripts is safe because node:sqlite replaces better-sqlite3 (checked below).
 # Installed under lib/ so the package keeps the global-install path settings.pi.json names.
-FROM --platform=$BUILDPLATFORM node:26-alpine@sha256:6f08a523443ddedf52941874c203475b0ad503e859ad70cb26ab8be9a517dbd5 AS mcp
+FROM --platform=$BUILDPLATFORM node:26-alpine@sha256:ae8e1c19d56886270987e99b3cfcef13a919f0655b376ae322bc64ada76f88cd AS mcp
 WORKDIR /opt/mcp/lib
 COPY mcp/package.json mcp/package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts
 
 # Azure CLI is not packaged for alpine. uv supplies a checksummed musl Python 3.13 and installs az/uv.lock,
 # hash-checked, wheels only (--no-build). Never $BUILDPLATFORM: wheels are arch- and libc-specific.
-FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 AS az
+FROM alpine:3.24@sha256:c6b073f8e9e58d881f6ffba6ebf3b9ebd60b9e7d6e8337018c0e68bb5c356873 AS az
 RUN apk add --no-cache \
       uv=0.11.19-r0
 ENV UV_PYTHON_INSTALL_DIR=/opt/az/python \
@@ -27,7 +27,7 @@ RUN uv python install 3.13 \
 # safe.directory '*': repos are host-owned bind mounts at arbitrary host paths. The home dirs are the parents of
 # the launchers' session mounts: docker creates a missing parent root-owned, and the harness could not write its login there.
 # /logins is 1000-owned so a new login store volume, populated from it, is writable by agents-logins-save.
-FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+FROM alpine:3.24@sha256:c6b073f8e9e58d881f6ffba6ebf3b9ebd60b9e7d6e8337018c0e68bb5c356873
 
 RUN apk add --no-cache \
       aws-cli=2.34.63-r0 \
