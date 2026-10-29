@@ -78,6 +78,21 @@ ENV USE_BUILTIN_RIPGREP=0 \
     CLAUDE_CODE_SANDBOXED=1 \
     DISABLE_AUTOUPDATER=1
 
+# --- Token optimizations ---
+
+# agent_summary: every ~30 s per running subagent, the whole transcript is re-sent to the agent's own model for a
+# 3-5 word panel status, measured at 15-26% of a session's spend. No setting turns it off
+# (https://github.com/anthropics/claude-code/issues/86879). CLAUDE_CODE_FORK_SUBAGENT=0 does, but drops fork
+# subagents with it. This Bun preload swaps the summary timer for an inert one; the binary is unmodified.
+# Fail-open: it matches the timer by source text, so a rename in an update silently brings summaries back. After
+# a Claude Code bump, check `CC_AGENT_SUMMARY_LOG=/tmp/nas.log claude --version && cat /tmp/nas.log` reports
+# `preload active mode=off`. Pinned to a gist revision by checksum because it runs inside every claude process;
+# review the diff before bumping it. MIT, Flamerix AI: https://gist.github.com/flamerix-ai/c3905705cc4205e5de3011fa2e74efce
+ADD --chmod=0644 --checksum=sha256:dc6699da069646365492261d8ade189cd19af352ebfdc5926e6aae0a2e8d59f7 \
+    https://gist.githubusercontent.com/flamerix-ai/c3905705cc4205e5de3011fa2e74efce/raw/2fe224167473e3185c104a5dbff7a788ab025b3b/no-agent-summary.js \
+    /opt/claude-code/no-agent-summary.js
+ENV BUN_OPTIONS="--preload /opt/claude-code/no-agent-summary.js"
+
 # Last root step: no setuid/setgid files, and nothing world-writable but /tmp (a tmpfs at runtime).
 RUN { find / -xdev -perm /6000 -type f -exec chmod a-s {} + 2>/dev/null || true; } \
  && { find / -xdev -perm -0002 ! -type l ! -path /tmp -exec chmod o-w {} + 2>/dev/null || true; }
