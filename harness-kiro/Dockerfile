@@ -4,7 +4,7 @@
 ARG KIRO_VERSION=2.33.1
 
 # Fetches and checksums only, so run it native on the builder; TARGETARCH still picks the asset.
-FROM --platform=$BUILDPLATFORM alpine:3.24@sha256:c6b073f8e9e58d881f6ffba6ebf3b9ebd60b9e7d6e8337018c0e68bb5c356873 AS build
+FROM --platform=$BUILDPLATFORM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a AS build
 ARG KIRO_VERSION
 ARG TARGETARCH
 # -e is what enforces the checksum gate below; pipefail only covers a command appended after the pipe.
