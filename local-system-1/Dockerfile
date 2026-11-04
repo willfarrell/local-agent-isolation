@@ -2,22 +2,22 @@
 # check=error=true
 
 # Never $BUILDPLATFORM: pip picks the musllinux wheel for the target arch.
-FROM alpine:3.24@sha256:c6b073f8e9e58d881f6ffba6ebf3b9ebd60b9e7d6e8337018c0e68bb5c356873 AS build
+FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a AS build
 RUN apk add --no-cache \
       py3-pip=26.1.2-r0 \
-      python3=3.14.8-r0
+      python3=3.14.10-r1
 COPY requirements.txt /tmp/requirements.txt
 # --no-deps: tokenizers only pulls huggingface_hub for downloads, which julia.py does itself.
 RUN pip install --no-cache-dir --no-deps --only-binary=:all: --require-hashes \
       --target /opt/julia/site -r /tmp/requirements.txt
 
 # PyTorch has no musl build, so this runs upstream's ONNX export on alpine's onnxruntime.
-FROM alpine:3.24@sha256:c6b073f8e9e58d881f6ffba6ebf3b9ebd60b9e7d6e8337018c0e68bb5c356873
+FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 RUN apk add --no-cache \
       ca-certificates=20261020-r0 \
       py3-numpy=2.4.6-r0 \
       py3-onnxruntime=1.24.4-r1 \
-      python3=3.14.8-r0 \
+      python3=3.14.10-r1 \
       tini=0.19.0-r3 \
  && addgroup -g 1000 agent \
  && adduser -D -u 1000 -G agent -h /home agent \

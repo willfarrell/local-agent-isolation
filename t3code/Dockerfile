@@ -1,14 +1,14 @@
 # syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 # check=error=true
 
-ARG T3CODE_VERSION=v0.1.1
-ARG T3CODE_COMMIT=fe27e8e3dc12dcbb108e9a28fd9b8cb65f34ae92
+ARG T3CODE_VERSION=v0.1.3
+ARG T3CODE_COMMIT=d2c440312e5f39d59827ed466838a623516454d6
 ARG COREPACK_VERSION=0.36.0
 # Bump with the version: npm view corepack@VERSION dist.integrity
 ARG COREPACK_INTEGRITY=sha512-SiiJsBhZqdBiPHTEl6OT3sASrRrKIcYTQMsVGXx6EE/gM8WFMwYjeIX8Tt8RiU4Iv2J6LbT8KpGfCOsBpRWB/w==
 # Upstream's packageManager pins no hash. Bump with the t3code tag: dist.integrity of pnpm@VERSION, as hex.
-ARG PNPM_VERSION=11.10.0
-ARG PNPM_SHA512=0b7f8b98060031904c017e3a41eb187a16d40eeb829b95c4f8cb03681761fc4ab53dd219115b9b447f4dce1a05a214764461e7d3703392a9f32f9511ce8c86c8
+ARG PNPM_VERSION=12.14.0
+ARG PNPM_SHA512=c18ba6d87993d3d164cb5e8948f32b2c06ee854487e06cd8d86781342fb3e5bb4634367034711e86802baa9c37bea906ce1929ad08d70884c97d801df13389a6
 
 # Built from source: the published `t3` is a glibc Node SEA. Never $BUILDPLATFORM: node-pty compiles here (no linux prebuilds).
 FROM node:26-alpine@sha256:ae8e1c19d56886270987e99b3cfcef13a919f0655b376ae322bc64ada76f88cd AS build
@@ -24,7 +24,7 @@ RUN apk add --no-cache \
       git=2.54.0-r0 \
       linux-headers=7.0.0-r1 \
       make=4.4.1-r4 \
-      python3=3.14.8-r0
+      python3=3.14.10-r1
 WORKDIR /src
 # A tag can move, so the commit is checked as well.
 RUN git clone --depth 1 --branch "${T3CODE_VERSION}" https://github.com/pingdotgg/t3code.git . \

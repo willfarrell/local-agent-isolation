@@ -10,9 +10,9 @@ RUN npm ci --omit=dev --ignore-scripts
 
 # Azure CLI is not packaged for alpine. uv supplies a checksummed musl Python 3.13 and installs az/uv.lock,
 # hash-checked, wheels only (--no-build). Never $BUILDPLATFORM: wheels are arch- and libc-specific.
-FROM alpine:3.24@sha256:c6b073f8e9e58d881f6ffba6ebf3b9ebd60b9e7d6e8337018c0e68bb5c356873 AS az
+FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a AS az
 RUN apk add --no-cache \
-      uv=0.11.19-r0
+      uv=0.11.19-r1
 ENV UV_PYTHON_INSTALL_DIR=/opt/az/python \
     UV_PROJECT_ENVIRONMENT=/opt/az/venv \
     UV_PYTHON_PREFERENCE=only-managed \
@@ -27,7 +27,7 @@ RUN uv python install 3.13 \
 # safe.directory '*': repos are host-owned bind mounts at arbitrary host paths. The home dirs are the parents of
 # the launchers' session mounts: docker creates a missing parent root-owned, and the harness could not write its login there.
 # /logins is 1000-owned so a new login store volume, populated from it, is writable by agents-logins-save.
-FROM alpine:3.24@sha256:c6b073f8e9e58d881f6ffba6ebf3b9ebd60b9e7d6e8337018c0e68bb5c356873
+FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 
 RUN apk add --no-cache \
       aws-cli=2.34.63-r0 \
@@ -40,7 +40,7 @@ RUN apk add --no-cache \
       jq=1.8.2-r0 \
       libgcc=15.2.0-r5 \
       libstdc++=15.2.0-r5 \
-      nodejs-current=26.5.1-r0 \
+      nodejs-current=26.12.1-r0 \
       npm=11.12.1-r0 \
       ripgrep=15.1.0-r0 \
       rust=1.96.1-r0 \

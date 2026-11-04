@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 # check=error=true
 
-ARG HERMES_VERSION=v0.22.4
-ARG HERMES_COMMIT=4d04303818b61bf3aa09278af48356315515965b
+ARG HERMES_VERSION=v0.22.5
+ARG HERMES_COMMIT=bf0203a794a07aac3ff764972ab9087baa4e4f4e
 # Hermes 0.22+ runs on Python 3.14 only (its lock covers nothing older); uv supplies a checksummed musl build.
 ARG PYTHON_VERSION=3.14
 
@@ -18,7 +18,7 @@ ARG HERMES_VERSION
 ARG HERMES_COMMIT
 ARG PYTHON_VERSION
 RUN apk add --no-cache \
-      uv=0.11.19-r0
+      uv=0.11.19-r1
 ENV UV_PYTHON_INSTALL_DIR=/opt/hermes/python \
     UV_PROJECT_ENVIRONMENT=/opt/hermes/venv \
     UV_PYTHON_PREFERENCE=only-managed \
